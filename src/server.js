@@ -8,6 +8,15 @@ const path = require('path');
 const fs = require('fs');
 require('dotenv').config();
 
+// GPIO control for AS32-TTL-100 (Raspberry Pi only)
+let Gpio;
+try {
+  Gpio = require('onoff').Gpio;
+} catch (err) {
+  // onoff not available (Windows/Mac) - GPIO control disabled
+  Gpio = null;
+}
+
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
@@ -183,6 +192,47 @@ function cleanupOldStats() {
     }
   } catch (err) {
     console.error('Failed to cleanup old stats:', err.message);
+  }
+}
+
+// GPIO Pin Definitions (BCM numbering) for AS32-TTL-100
+const M0_PIN = 23;
+const M1_PIN = 24;
+const AUX_PIN = 18;
+
+let m0, m1, aux;
+
+// Initialize GPIO for AS32-TTL-100 control (Raspberry Pi only)
+function initGPIO() {
+  if (!Gpio) {
+    console.log('⚠️  GPIO not available (not running on Raspberry Pi)');
+    return;
+  }
+
+  try {
+    m0 = new Gpio(M0_PIN, 'out');
+    m1 = new Gpio(M1_PIN, 'out');
+    aux = new Gpio(AUX_PIN, 'in');
+
+    // Set normal mode (M0=0, M1=0) for transmit/receive
+    m0.writeSync(0);
+    m1.writeSync(0);
+
+    console.log('✅ GPIO initialized: AS32-TTL-100 in NORMAL mode (M0=0, M1=0)');
+  } catch (err) {
+    console.error('⚠️  GPIO initialization failed:', err.message);
+    console.log('   Module must be set to normal mode manually (M0→GND, M1→GND)');
+  }
+}
+
+// Cleanup GPIO on exit
+function cleanupGPIO() {
+  try {
+    if (m0) m0.unexport();
+    if (m1) m1.unexport();
+    if (aux) aux.unexport();
+  } catch (err) {
+    // Ignore cleanup errors
   }
 }
 
@@ -571,6 +621,9 @@ server.listen(PORT, '0.0.0.0', () => {
   // Load persisted daily stats from SD card
   loadDailyStats();
 
+  // Initialize GPIO for AS32-TTL-100 control (Raspberry Pi only)
+  initGPIO();
+
   // Initialize serial port
   initSerialPort();
 
@@ -603,6 +656,9 @@ process.on('SIGINT', () => {
   // Save daily stats before exit
   saveDailyStats();
 
+  // Cleanup GPIO
+  cleanupGPIO();
+
   if (port && port.isOpen) {
     port.close(() => {
       console.log('Serial port closed');
@@ -617,6 +673,9 @@ process.on('SIGINT', () => {
 process.on('SIGTERM', () => {
   console.log('\nSIGTERM received, saving data...');
   saveDailyStats();
+
+  // Cleanup GPIO
+  cleanupGPIO();
 
   if (port && port.isOpen) {
     port.close(() => {
