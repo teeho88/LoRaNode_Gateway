@@ -47,6 +47,19 @@ ls -la /dev/ttyAMA0
 
 Raspberry Pi 3/4 mặc định dùng hardware UART (`ttyAMA0`) cho Bluetooth. Để giải phóng cho LoRa module:
 
+**Lưu ý:** Trên Raspberry Pi OS Bookworm (2023+), file config nằm ở `/boot/firmware/config.txt`. Trên phiên bản cũ hơn, file nằm ở `/boot/config.txt`.
+
+Kiểm tra file nào tồn tại:
+```bash
+ls -la /boot/firmware/config.txt /boot/config.txt
+```
+
+**Nếu thấy `/boot/firmware/config.txt`** (Raspberry Pi OS mới):
+```bash
+sudo nano /boot/firmware/config.txt
+```
+
+**Nếu thấy `/boot/config.txt`** (Raspberry Pi OS cũ):
 ```bash
 sudo nano /boot/config.txt
 ```
@@ -60,10 +73,21 @@ dtoverlay=disable-bt
 enable_uart=1
 ```
 
+Lưu file: **Ctrl+O**, **Enter**, **Ctrl+X**
+
 Sau đó disable Bluetooth service:
 ```bash
-sudo systemctl disable hciuart
+# Thử disable hciuart (có thể không tồn tại trên một số phiên bản)
+sudo systemctl disable hciuart 2>/dev/null || echo "hciuart service not found (this is OK)"
+
+# Disable bluetooth service (tên mới hơn)
+sudo systemctl disable bluetooth 2>/dev/null || echo "bluetooth service not found"
+
+# Kiểm tra service nào đang chạy liên quan đến Bluetooth
+systemctl list-units | grep -i blue
 ```
+
+**Lưu ý:** Nếu tất cả lệnh trên đều báo "not found", đó là điều bình thường. Miễn là bạn đã thêm `dtoverlay=disable-bt` vào `/boot/config.txt`, Bluetooth đã bị tắt ở mức hardware.
 
 Reboot:
 ```bash
