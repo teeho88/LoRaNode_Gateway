@@ -209,6 +209,18 @@ function initGPIO() {
     return;
   }
 
+  // OPTION 1: Hardwired M0, M1 to GND (recommended if module doesn't support AT config)
+  // If your AS32-TTL-100 module doesn't respond to AT commands,
+  // simply connect M0 and M1 directly to GND for NORMAL mode
+  const USE_HARDWIRED_MODE = true; // Set to false to use GPIO control
+
+  if (USE_HARDWIRED_MODE) {
+    console.log('ℹ️  M0 and M1 hardwired to GND (NORMAL mode)');
+    console.log('   No GPIO control needed - module always in transmit/receive mode');
+    return;
+  }
+
+  // OPTION 2: GPIO control (if module supports mode switching)
   try {
     m0 = new Gpio(M0_PIN, 'out');
     m1 = new Gpio(M1_PIN, 'out');
