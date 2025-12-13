@@ -1,0 +1,27 @@
+{
+  "name": "lora-sensor-gateway",
+  "version": "1.0.0",
+  "description": "LoRa Gateway for DHT11 sensor nodes with relay control",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "lora",
+    "sensor",
+    "iot",
+    "gateway",
+    "dht11"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^5.2.1",
+    "serialport": "^13.0.0",
+    "socket.io": "^4.8.1"
+  }
+}

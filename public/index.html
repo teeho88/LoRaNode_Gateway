@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LoRa Gateway Dashboard</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>🌐 LoRa Gateway Dashboard</h1>
+      <div class="status-bar">
+        <span id="connection-status" class="status-indicator">⚫ Đang kết nối...</span>
+        <span id="system-info"></span>
+      </div>
+    </header>
+
+    <main>
+      <section class="nodes-section">
+        <h2>Sensor Nodes</h2>
+        <div id="nodes-container" class="nodes-grid">
+          <div class="loading">Đang tải dữ liệu...</div>
+        </div>
+      </section>
+
+      <section class="stats-section">
+        <h2>Thống kê hôm nay</h2>
+        <div id="daily-stats-container" class="stats-grid">
+          <div class="loading">Đang tải thống kê...</div>
+        </div>
+      </section>
+
+      <section class="chart-section">
+        <h2>Lịch sử nhiệt độ & độ ẩm</h2>
+        <div class="chart-controls">
+          <select id="node-select">
+            <option value="">Tất cả nodes</option>
+          </select>
+          <input type="date" id="date-filter" title="Chọn ngày">
+          <input type="time" id="start-time-filter" title="Thời gian bắt đầu">
+          <input type="time" id="end-time-filter" title="Thời gian kết thúc">
+          <button id="apply-filter" class="btn-filter">Lọc</button>
+          <button id="clear-filter" class="btn-filter">Xóa lọc</button>
+        </div>
+        <canvas id="chart" width="800" height="300"></canvas>
+      </section>
+
+      <section class="logs-section">
+        <h2>Nhật ký hệ thống</h2>
+        <div id="logs" class="logs-container"></div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

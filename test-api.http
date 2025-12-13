@@ -1,0 +1,73 @@
+### Test API endpoints for LoRa Gateway
+### Sử dụng với REST Client extension trong VS Code
+
+@baseUrl = http://localhost:3000
+
+### Health check
+GET {{baseUrl}}/health
+
+### Get system status
+GET {{baseUrl}}/api/status
+
+### Get all nodes
+GET {{baseUrl}}/api/nodes
+
+### Get specific node
+GET {{baseUrl}}/api/nodes/KHO_A
+
+### Get history (last 100 records)
+GET {{baseUrl}}/api/history?limit=100
+
+### Get history for specific node
+GET {{baseUrl}}/api/history?nodeId=KHO_A&limit=50
+
+### Get history for specific date
+GET {{baseUrl}}/api/history?nodeId=KHO_A&date=2025-12-09&limit=200
+
+### Get history for date and time range
+GET {{baseUrl}}/api/history?nodeId=KHO_A&date=2025-12-09&startTime=08:00:00&endTime=18:00:00
+
+### Get today's daily statistics for all nodes
+GET {{baseUrl}}/api/daily-stats
+
+### Get all daily statistics for specific node
+GET {{baseUrl}}/api/daily-stats/KHO_A
+
+### Get daily statistics for specific node and date
+GET {{baseUrl}}/api/daily-stats/KHO_A?date=2025-12-09
+
+### Turn relay ON
+POST {{baseUrl}}/api/control/relay
+Content-Type: application/json
+
+{
+  "target": "KHO_A",
+  "relay": true
+}
+
+### Turn relay OFF
+POST {{baseUrl}}/api/control/relay
+Content-Type: application/json
+
+{
+  "target": "KHO_A",
+  "relay": false
+}
+
+### Switch to auto mode
+POST {{baseUrl}}/api/control/relay
+Content-Type: application/json
+
+{
+  "target": "KHO_A",
+  "auto": true
+}
+
+### Control all nodes
+POST {{baseUrl}}/api/control/relay
+Content-Type: application/json
+
+{
+  "target": "ALL",
+  "relay": true
+}
