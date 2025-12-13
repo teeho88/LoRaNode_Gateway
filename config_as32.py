@@ -64,8 +64,9 @@ def set_mode(mode):
     mode_names = {0: "Normal", 1: "WOR", 2: "Config", 3: "Sleep"}
     print(f"📡 Mode set to: {mode_names[mode]} (M0={'HIGH' if m0 else 'LOW'}, M1={'HIGH' if m1 else 'LOW'})")
 
-    # Wait for module to switch mode
-    time.sleep(0.1)
+    # Wait for module to switch mode (increased delay for stability)
+    print("   Waiting for mode switch...")
+    time.sleep(1.5)  # Increased from 0.1s to 1.5s
     return True
 
 def wait_for_aux(timeout=2):
