@@ -67,14 +67,20 @@ socket.on('sensorData', (data) => {
 
   // Only update history and chart if no filter is active
   if (!state.isFiltered) {
-    state.history.push(data);
+    // If history is empty or too small, reload from API
+    if (state.history.length < 2) {
+      console.log('History too small, reloading from API...');
+      fetchRecentHistory();
+    } else {
+      state.history.push(data);
 
-    // Keep history limited (memory optimization)
-    if (state.history.length > 100) {
-      state.history.shift();
+      // Keep history limited (memory optimization)
+      if (state.history.length > 100) {
+        state.history.shift();
+      }
+
+      drawChart();
     }
-
-    drawChart();
   }
 
   // Always update node card (latest data)
@@ -589,3 +595,4 @@ setInterval(() => {
 
 // Initial load
 addLog('info', 'Dashboard khởi động');
+updateFilterStatus(); // Initialize filter status indicator

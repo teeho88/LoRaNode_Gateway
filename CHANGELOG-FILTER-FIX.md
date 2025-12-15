@@ -16,6 +16,14 @@ Thêm cờ `state.isFiltered` để theo dõi trạng thái filter:
 - Khi `isFiltered = true`: Không cập nhật biểu đồ với dữ liệu mới từ WebSocket
 - Khi `isFiltered = false`: Cập nhật biểu đồ real-time như bình thường
 
+## 🐛 Vấn đề bổ sung (Update 2)
+
+### Vấn đề 2.1: Chart không hiển thị sau khi refresh trang
+Khi refresh trang, `initialData` từ WebSocket chỉ chứa 50 bản ghi cuối, có thể không đủ để vẽ chart (cần tối thiểu 2 bản ghi).
+
+### Vấn đề 2.2: Chart không hiển thị real-time sau khi Arduino reconnect
+Khi Arduino node mất kết nối rồi kết nối lại, nếu `state.history` trống hoặc quá nhỏ, chart không tự động cập nhật.
+
 ## 📝 Các thay đổi
 
 ### 1. **public/app.js** - State management
@@ -37,25 +45,54 @@ const state = {
 };
 ```
 
-### 2. **public/app.js** - WebSocket handler
+### 2. **public/app.js** - initialData handler (Fix refresh issue)
 
-Chỉ cập nhật chart khi KHÔNG có filter active:
+Load đầy đủ dữ liệu từ API thay vì dùng `initialData` giới hạn:
+
+```javascript
+socket.on('initialData', (data) => {
+  console.log('Received initial data:', data);
+  data.nodes.forEach(node => {
+    state.nodes.set(node.id, node);
+  });
+  state.history = data.history || [];
+  state.isFiltered = false; // Ensure chart is in real-time mode ← MỚI
+  renderNodes();
+  updateNodeSelect();
+
+  // Fetch full history from API instead of using limited initialData ← MỚI
+  fetchRecentHistory();
+
+  fetchDailyStats();
+  addLog('info', `Đã tải ${data.nodes.length} nodes, đang tải dữ liệu biểu đồ...`);
+});
+```
+
+### 3. **public/app.js** - WebSocket handler (Fix filter + auto-reload)
+
+Chỉ cập nhật chart khi KHÔNG có filter active, và tự động reload nếu history quá nhỏ:
 
 ```javascript
 socket.on('sensorData', (data) => {
   console.log('Sensor data:', data);
   state.nodes.set(data.id, data);
 
-  // Only update history and chart if no filter is active ← MỚI
+  // Only update history and chart if no filter is active
   if (!state.isFiltered) {
-    state.history.push(data);
+    // If history is empty or too small, reload from API ← MỚI (Fix reconnect)
+    if (state.history.length < 2) {
+      console.log('History too small, reloading from API...');
+      fetchRecentHistory();
+    } else {
+      state.history.push(data);
 
-    // Keep history limited (memory optimization)
-    if (state.history.length > 100) {
-      state.history.shift();
+      // Keep history limited (memory optimization)
+      if (state.history.length > 100) {
+        state.history.shift();
+      }
+
+      drawChart();
     }
-
-    drawChart();
   }
 
   // Always update node card (latest data) ← VẪN CẬP NHẬT NODE CARD
@@ -69,8 +106,19 @@ socket.on('sensorData', (data) => {
 **Quan trọng:**
 - Node cards vẫn cập nhật real-time (hiển thị giá trị mới nhất)
 - Chỉ biểu đồ bị "khóa" khi có filter
+- Nếu history < 2 bản ghi → tự động reload từ API
 
-### 3. **public/app.js** - fetchFilteredHistory()
+### 4. **public/app.js** - Initial load (Fix status indicator)
+
+Cập nhật status indicator khi khởi động:
+
+```javascript
+// Initial load
+addLog('info', 'Dashboard khởi động');
+updateFilterStatus(); // Initialize filter status indicator ← MỚI
+```
+
+### 6. **public/app.js** - fetchFilteredHistory()
 
 Set `isFiltered = true` khi apply filter:
 
@@ -88,7 +136,7 @@ async function fetchFilteredHistory() {
 }
 ```
 
-### 4. **public/app.js** - fetchRecentHistory()
+### 7. **public/app.js** - fetchRecentHistory()
 
 Clear `isFiltered` khi xóa filter:
 
@@ -106,7 +154,7 @@ async function fetchRecentHistory() {
 }
 ```
 
-### 5. **public/app.js** - Visual indicator
+### 8. **public/app.js** - Visual indicator
 
 Thêm hàm hiển thị trạng thái filter:
 
@@ -124,7 +172,7 @@ function updateFilterStatus() {
 }
 ```
 
-### 6. **public/index.html** - UI indicator
+### 9. **public/index.html** - UI indicator
 
 Thêm phần tử hiển thị trạng thái:
 
@@ -140,7 +188,7 @@ Thêm phần tử hiển thị trạng thái:
 </div>
 ```
 
-### 7. **public/app.js** - Clear filter button
+### 10. **public/app.js** - Clear filter button
 
 Thêm clear `isFiltered`:
 
