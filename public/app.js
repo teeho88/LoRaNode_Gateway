@@ -7,6 +7,7 @@ const state = {
   history: [],
   selectedNode: null,
   dailyStats: [],
+  isFiltered: false, // Track if filters are active
   filters: {
     date: null,
     startTime: null,
@@ -26,6 +27,7 @@ const startTimeFilter = document.getElementById('start-time-filter');
 const endTimeFilter = document.getElementById('end-time-filter');
 const applyFilterBtn = document.getElementById('apply-filter');
 const clearFilterBtn = document.getElementById('clear-filter');
+const filterStatus = document.getElementById('filter-status');
 const chartCanvas = document.getElementById('chart');
 const chartCtx = chartCanvas.getContext('2d');
 
@@ -47,27 +49,37 @@ socket.on('initialData', (data) => {
     state.nodes.set(node.id, node);
   });
   state.history = data.history || [];
+  state.isFiltered = false; // Ensure chart is in real-time mode on connect
   renderNodes();
   updateNodeSelect();
-  drawChart();
+
+  // Fetch full history from API instead of using limited initialData
+  fetchRecentHistory();
+
   fetchDailyStats();
-  addLog('info', `Đã tải ${data.nodes.length} nodes, ${state.history.length} bản ghi`);
+  addLog('info', `Đã tải ${data.nodes.length} nodes, đang tải dữ liệu biểu đồ...`);
 });
 
 // Receive real-time sensor data
 socket.on('sensorData', (data) => {
   console.log('Sensor data:', data);
   state.nodes.set(data.id, data);
-  state.history.push(data);
 
-  // Keep history limited (memory optimization)
-  if (state.history.length > 100) {
-    state.history.shift();
+  // Only update history and chart if no filter is active
+  if (!state.isFiltered) {
+    state.history.push(data);
+
+    // Keep history limited (memory optimization)
+    if (state.history.length > 100) {
+      state.history.shift();
+    }
+
+    drawChart();
   }
 
+  // Always update node card (latest data)
   updateNodeCard(data);
   updateNodeSelect();
-  drawChart();
 
   if (!data.ack) {
     // Check if data has 2 sensors
@@ -496,8 +508,10 @@ async function fetchFilteredHistory() {
 
     if (data.success) {
       state.history = data.data;
+      state.isFiltered = true; // Mark as filtered
       drawChart();
-      addLog('info', `Đã lọc ${data.count} bản ghi`);
+      updateFilterStatus();
+      addLog('info', `Đã lọc ${data.count} bản ghi - Biểu đồ đã khóa`);
     }
   } catch (err) {
     console.error('Failed to fetch filtered history:', err);
@@ -520,12 +534,27 @@ async function fetchRecentHistory() {
 
     if (data.success) {
       state.history = data.data;
+      state.isFiltered = false; // Clear filtered state
       drawChart();
-      addLog('info', `Đã tải ${data.count} bản ghi gần nhất`);
+      updateFilterStatus();
+      addLog('info', `Đã tải ${data.count} bản ghi gần nhất - Biểu đồ real-time`);
     }
   } catch (err) {
     console.error('Failed to fetch recent history:', err);
     addLog('error', 'Lỗi khi tải dữ liệu');
+  }
+}
+
+// Update filter status indicator
+function updateFilterStatus() {
+  if (state.isFiltered) {
+    filterStatus.innerHTML = '🔒 Biểu đồ đã khóa (không tự động cập nhật)';
+    filterStatus.style.color = '#ff6b6b';
+    filterStatus.style.fontWeight = 'bold';
+  } else {
+    filterStatus.innerHTML = '🔄 Real-time (tự động cập nhật)';
+    filterStatus.style.color = '#4ecdc4';
+    filterStatus.style.fontWeight = 'normal';
   }
 }
 
@@ -543,13 +572,13 @@ clearFilterBtn.addEventListener('click', () => {
   state.filters.date = null;
   state.filters.startTime = null;
   state.filters.endTime = null;
+  state.isFiltered = false; // Clear filtered state
   dateFilter.value = '';
   startTimeFilter.value = '';
   endTimeFilter.value = '';
 
   // Reload recent history from API (last 100 records)
   fetchRecentHistory();
-  addLog('info', 'Đã xóa bộ lọc');
 });
 
 // Periodic updates
