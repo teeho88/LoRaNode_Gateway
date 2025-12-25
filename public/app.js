@@ -285,7 +285,7 @@ function setAutoMode(nodeId) {
 // Update node select dropdown
 function updateNodeSelect() {
   const currentValue = nodeSelect.value;
-  nodeSelect.innerHTML = '<option value="">Tất cả nodes</option>';
+  nodeSelect.innerHTML = '<option value="" disabled selected>-- Chọn Node --</option>';
 
   state.nodes.forEach((node, id) => {
     const option = document.createElement('option');
