@@ -285,7 +285,7 @@ function setAutoMode(nodeId) {
 // Update node select dropdown
 function updateNodeSelect() {
   const currentValue = nodeSelect.value;
-  nodeSelect.innerHTML = '<option value="">Tất cả nodes</option>';
+  nodeSelect.innerHTML = '<option value="" disabled selected>-- Chọn Node --</option>';
 
   state.nodes.forEach((node, id) => {
     const option = document.createElement('option');
@@ -298,9 +298,27 @@ function updateNodeSelect() {
 }
 
 // Node select change handler
+// Node select change handler
 nodeSelect.addEventListener('change', (e) => {
   state.selectedNode = e.target.value || null;
-  drawChart();
+
+  // Reset filters when switching nodes
+  state.filters.date = null;
+  state.filters.startTime = null;
+  state.filters.endTime = null;
+  state.isFiltered = false;
+
+  dateFilter.value = '';
+  startTimeFilter.value = '';
+  endTimeFilter.value = '';
+
+  updateFilterStatus();
+
+  if (state.selectedNode) {
+    fetchRecentHistory();
+  } else {
+    drawChart();
+  }
 });
 
 // Draw chart (simple canvas-based chart)
@@ -311,6 +329,15 @@ function drawChart() {
 
   // Clear canvas
   chartCtx.clearRect(0, 0, width, height);
+
+  // Require node selection
+  if (!state.selectedNode) {
+    chartCtx.fillStyle = '#666';
+    chartCtx.font = '14px Arial';
+    chartCtx.textAlign = 'center';
+    chartCtx.fillText('Vui lòng chọn Node để xem biểu đồ', width / 2, height / 2);
+    return;
+  }
 
   // Filter data by selected node
   let data = state.history;

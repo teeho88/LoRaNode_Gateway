@@ -421,12 +421,18 @@ app.get('/api/nodes/:id', (req, res) => {
 // Get data history with date/time filtering
 app.get('/api/history', (req, res) => {
   const { nodeId, limit = 100, date, startTime, endTime } = req.query;
+
+  if (!nodeId) {
+    return res.status(400).json({
+      success: false,
+      message: 'nodeId is required for history'
+    });
+  }
+
   let history = dataHistory;
 
   // Filter by node ID
-  if (nodeId) {
-    history = history.filter(d => d.id === nodeId);
-  }
+  history = history.filter(d => d.id === nodeId);
 
   // Filter by date (YYYY-MM-DD)
   if (date) {

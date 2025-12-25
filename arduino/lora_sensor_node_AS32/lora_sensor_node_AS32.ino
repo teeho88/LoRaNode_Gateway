@@ -44,7 +44,7 @@
 #define LORA_AUX 5 // Optional: AUX pin for transmission status
 
 // Node Configuration
-#define NODE_ID "KHO_A"
+#define NODE_ID "KHO_B"
 
 // Thresholds
 #define TEMP_HIGH_THRESHOLD 32.0
