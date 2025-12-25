@@ -312,6 +312,15 @@ function drawChart() {
   // Clear canvas
   chartCtx.clearRect(0, 0, width, height);
 
+  // Require node selection
+  if (!state.selectedNode) {
+    chartCtx.fillStyle = '#666';
+    chartCtx.font = '14px Arial';
+    chartCtx.textAlign = 'center';
+    chartCtx.fillText('Vui lòng chọn Node để xem biểu đồ', width / 2, height / 2);
+    return;
+  }
+
   // Filter data by selected node
   let data = state.history;
   if (state.selectedNode) {
