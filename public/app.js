@@ -298,9 +298,27 @@ function updateNodeSelect() {
 }
 
 // Node select change handler
+// Node select change handler
 nodeSelect.addEventListener('change', (e) => {
   state.selectedNode = e.target.value || null;
-  drawChart();
+
+  // Reset filters when switching nodes
+  state.filters.date = null;
+  state.filters.startTime = null;
+  state.filters.endTime = null;
+  state.isFiltered = false;
+
+  dateFilter.value = '';
+  startTimeFilter.value = '';
+  endTimeFilter.value = '';
+
+  updateFilterStatus();
+
+  if (state.selectedNode) {
+    fetchRecentHistory();
+  } else {
+    drawChart();
+  }
 });
 
 // Draw chart (simple canvas-based chart)
