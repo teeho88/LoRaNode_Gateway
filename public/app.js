@@ -159,11 +159,14 @@ function createNodeCard(node) {
 
   let sensorDataHTML = '';
   if (hasTwoSensors) {
+    const td1 = (node.temp1 - (100 - node.hum1) / 5).toFixed(1);
+    const td2 = (node.temp2 - (100 - node.hum2) / 5).toFixed(1);
+
     // Display data from 2 sensors
     sensorDataHTML = `
       <div class="node-data">
         <div class="sensor-group">
-          <div class="sensor-label">🌡️ Cảm biến 1</div>
+          <div class="sensor-label">🏠 Trong kho (S1)</div>
           <div class="sensor-values">
             <div class="data-item">
               <div class="data-label">Nhiệt độ</div>
@@ -177,7 +180,7 @@ function createNodeCard(node) {
         </div>
 
         <div class="sensor-group">
-          <div class="sensor-label">🌡️ Cảm biến 2</div>
+          <div class="sensor-label">🌲 Ngoài kho (S2)</div>
           <div class="sensor-values">
             <div class="data-item">
               <div class="data-label">Nhiệt độ</div>
@@ -191,15 +194,15 @@ function createNodeCard(node) {
         </div>
 
         <div class="sensor-group average">
-          <div class="sensor-label">📊 Trung bình</div>
+          <div class="sensor-label">💧 Điểm sương (Td)</div>
           <div class="sensor-values">
             <div class="data-item">
-              <div class="data-label">Nhiệt độ</div>
-              <div class="data-value temp avg">${node.temp}°C</div>
+              <div class="data-label">Trong kho</div>
+              <div class="data-value temp avg">${td1}°C</div>
             </div>
             <div class="data-item">
-              <div class="data-label">Độ ẩm</div>
-              <div class="data-value hum avg">${node.hum}%</div>
+              <div class="data-label">Ngoài kho</div>
+              <div class="data-value temp avg">${td2}°C</div>
             </div>
           </div>
         </div>

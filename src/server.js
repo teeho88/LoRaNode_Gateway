@@ -300,7 +300,7 @@ function initSerialPort() {
         // Fallback: Try to parse as plain JSON (for backward compatibility)
         const trimmed = chunk.trim();
         if (trimmed.startsWith('{') && trimmed.endsWith('}') &&
-            !trimmed.includes('<') && !trimmed.includes('>')) {
+          !trimmed.includes('<') && !trimmed.includes('>')) {
           try {
             const jsonData = JSON.parse(trimmed);
             handleSensorData(jsonData);
@@ -346,11 +346,12 @@ function handleSensorData(data) {
   // Log received data in compact format
   if (data.temp1 !== undefined && data.temp2 !== undefined) {
     // 2 sensors format
+    const td1 = (data.temp1 - (100 - data.hum1) / 5).toFixed(1);
+    const td2 = (data.temp2 - (100 - data.hum2) / 5).toFixed(1);
     console.log(
       `📊 ${data.id} | ` +
-      `S1: ${data.temp1}°C ${data.hum1}% | ` +
-      `S2: ${data.temp2}°C ${data.hum2}% | ` +
-      `Avg: ${data.temp}°C ${data.hum}% | ` +
+      `In: ${data.temp1}°C ${data.hum1}% (Td:${td1}) | ` +
+      `Out: ${data.temp2}°C ${data.hum2}% (Td:${td2}) | ` +
       `Relay: ${data.relay ? '🟢 ON' : '⚪ OFF'} ${data.manual ? '[Manual]' : '[Auto]'}`
     );
   } else {
