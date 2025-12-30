@@ -210,18 +210,45 @@ void readSensors() {
 }
 
 void autoControlRelay() {
+  // Ensure both sensors are valid for this logic
+  if (isnan(temperature1) || isnan(humidity1) || isnan(temperature2) || isnan(humidity2)) {
+    Serial.println(F("Auto control: Cannot proceed - Sensor data missing"));
+    return;
+  }
+
+  // Calculate Dew Points
+  float td1 = calculateDewPoint(temperature1, humidity1);
+  float td2 = calculateDewPoint(temperature2, humidity2);
+
   bool shouldActivate = false;
 
-  // Check if average temperature or humidity exceeds thresholds
-  if (avgTemperature > TEMP_HIGH_THRESHOLD || avgHumidity > HUM_HIGH_THRESHOLD) {
+  // Logic Condition:
+  // ( (Td1 < Td2 < t1) || (Td2 < Td1 < t2) ) && t2 <= 32 && h1 > h2
+  
+  bool condition1 = (td1 < td2 && td2 < temperature1);
+  bool condition2 = (td2 < td1 && td1 < temperature2);
+  bool tempCondition = (temperature2 <= 32);
+  bool humCondition = (humidity1 > humidity2);
+
+  if ((condition1 || condition2) && tempCondition && humCondition) {
     shouldActivate = true;
   }
+
+  // Debug logging
+  Serial.print(F("Auto Check | Td1: ")); Serial.print(td1);
+  Serial.print(F(", Td2: ")); Serial.print(td2);
+  Serial.print(F(" | Cond: ")); Serial.println(shouldActivate ? F("PASS") : F("FAIL"));
 
   if (shouldActivate != relayState) {
     setRelay(shouldActivate);
     Serial.print(F("Auto control: Fan turned "));
     Serial.println(shouldActivate ? F("ON") : F("OFF"));
   }
+}
+
+// Calculate Dew Point: Td = t - (100 - h)/5
+float calculateDewPoint(float t, float h) {
+  return t - (100.0 - h) / 5.0;
 }
 
 void setRelay(bool state) {
