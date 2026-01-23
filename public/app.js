@@ -623,6 +623,13 @@ setInterval(() => {
   fetchDailyStats();
 }, 30000); // Update every 30 seconds
 
+// Check node status (online/offline) every 5 seconds
+setInterval(() => {
+  state.nodes.forEach(node => {
+    updateNodeCard(node);
+  });
+}, 5000);
+
 // Initial load
 addLog('info', 'Dashboard khởi động');
 updateFilterStatus(); // Initialize filter status indicator
