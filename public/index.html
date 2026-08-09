@@ -16,22 +16,134 @@
       </div>
     </header>
 
+    <nav class="tab-nav" aria-label="Chức năng gateway">
+      <button class="tab-button active" type="button" data-tab="nodes" aria-controls="tab-nodes" aria-selected="true">
+        Giám sát
+      </button>
+      <button class="tab-button" type="button" data-tab="config" aria-controls="tab-config" aria-selected="false">
+        Cấu hình
+      </button>
+      <button class="tab-button" type="button" data-tab="stats" aria-controls="tab-stats" aria-selected="false">
+        Thống kê
+      </button>
+      <button class="tab-button" type="button" data-tab="analytics" aria-controls="tab-analytics" aria-selected="false">
+        Phân tích
+      </button>
+      <button class="tab-button" type="button" data-tab="chart" aria-controls="tab-chart" aria-selected="false">
+        Biểu đồ
+      </button>
+      <button class="tab-button" type="button" data-tab="logs" aria-controls="tab-logs" aria-selected="false">
+        Nhật ký
+      </button>
+    </nav>
+
     <main>
-      <section class="nodes-section">
+      <section id="tab-nodes" class="nodes-section tab-panel active" data-tab-panel="nodes">
         <h2>Sensor Nodes</h2>
+        <p id="duplicate-id-warning" class="duplicate-id-warning" role="status" aria-live="polite"></p>
         <div id="nodes-container" class="nodes-grid">
           <div class="loading">Đang tải dữ liệu...</div>
         </div>
       </section>
 
-      <section class="stats-section">
+      <section id="tab-config" class="config-section tab-panel" data-tab-panel="config">
+        <h2>Cấu hình Node</h2>
+        <p class="config-note">
+          ID và Node Address là riêng từng node. Gateway Address và các thông số Network ID, Channel, Baud code, Air rate, Power là profile mạng dùng chung. Profile LoRa được lưu/stage trước để tránh node đổi sóng trước gateway.
+          Mỗi node có UID riêng lưu trong EEPROM; gateway dùng UID để phân biệt node ngay cả khi ID mặc định bị trùng sau lần nạp đầu.
+          Khi kích hoạt LoRa, node sẽ tự rollback về cấu hình cũ nếu không nhận được Commit trong 60 giây.
+          Trước khi Commit, gateway Raspberry Pi cũng phải được cấu hình sang cùng profile mới, nếu không gateway sẽ không thấy node trên mạng mới.
+        </p>
+        <div class="gateway-sync-box">
+          <div>
+            <strong>Trạng thái đồng bộ gateway:</strong>
+            <span id="gateway-sync-status">Đang kiểm tra...</span>
+          </div>
+          <button type="button" id="gateway-sync-confirm" class="btn-config btn-info">Tôi đã cấu hình gateway</button>
+        </div>
+        <form id="node-config-form" class="config-form">
+          <div class="form-grid">
+            <label>
+              Gateway Address
+              <input id="config-gateway-address" type="number" min="0" max="65535" placeholder="0">
+            </label>
+            <label>
+              Node hiện tại
+              <select id="config-target">
+                <option value="" disabled selected>-- Chọn Node --</option>
+              </select>
+            </label>
+            <label>
+              ID mới
+              <input id="config-node-id" type="text" maxlength="15" placeholder="VD: KHO_A">
+            </label>
+            <label>
+              Node Address
+              <input id="config-address" type="number" min="0" max="65535" placeholder="1">
+            </label>
+            <label>
+              Network ID
+              <input id="config-network-id" type="number" min="0" max="255" placeholder="0">
+            </label>
+            <label>
+              Channel
+              <input id="config-channel" type="number" min="0" max="80" placeholder="23">
+            </label>
+            <label>
+              Baud code
+              <input id="config-baud-rate-code" type="number" min="0" max="19" placeholder="9">
+            </label>
+            <label>
+              Air rate
+              <input id="config-air-rate" type="number" min="0" max="10" placeholder="5">
+            </label>
+            <label>
+              Power
+              <input id="config-power" type="number" min="0" max="3" placeholder="0">
+            </label>
+          </div>
+          <div class="config-actions">
+            <button type="submit" class="btn-config">Gửi cấu hình</button>
+            <button type="button" id="activate-config" class="btn-config btn-warn">Kích hoạt LoRa</button>
+            <button type="button" id="commit-config" class="btn-config btn-safe">Commit</button>
+            <button type="button" id="rollback-config" class="btn-config btn-danger">Rollback</button>
+            <span id="config-status">Chưa gửi cấu hình</span>
+          </div>
+        </form>
+      </section>
+
+      <section id="tab-stats" class="stats-section tab-panel" data-tab-panel="stats">
         <h2>Thống kê hôm nay</h2>
         <div id="daily-stats-container" class="stats-grid">
           <div class="loading">Đang tải thống kê...</div>
         </div>
       </section>
 
-      <section class="chart-section">
+      <section id="tab-analytics" class="analytics-section tab-panel" data-tab-panel="analytics">
+        <h2>Phân tích & Dự báo</h2>
+        <div class="analytics-controls">
+          <select id="analytics-node-select">
+            <option value="">-- Tất cả Node --</option>
+          </select>
+          <select id="analytics-window">
+            <option value="60">60 phút gần nhất</option>
+            <option value="120" selected>120 phút gần nhất</option>
+            <option value="240">240 phút gần nhất</option>
+          </select>
+          <select id="analytics-forecast">
+            <option value="15">Dự báo 15 phút</option>
+            <option value="30" selected>Dự báo 30 phút</option>
+            <option value="60">Dự báo 60 phút</option>
+          </select>
+          <button id="analytics-refresh" class="btn-filter" type="button">Làm mới</button>
+        </div>
+        <div id="analytics-summary" class="analytics-summary">Chưa có dữ liệu phân tích</div>
+        <div id="analytics-cards" class="analytics-grid">
+          <div class="loading">Đang tải phân tích...</div>
+        </div>
+      </section>
+
+      <section id="tab-chart" class="chart-section tab-panel" data-tab-panel="chart">
         <h2>Lịch sử nhiệt độ & độ ẩm</h2>
         <div class="chart-controls">
           <select id="node-select">
@@ -47,7 +159,7 @@
         <canvas id="chart" width="800" height="300"></canvas>
       </section>
 
-      <section class="logs-section">
+      <section id="tab-logs" class="logs-section tab-panel" data-tab-panel="logs">
         <h2>Nhật ký hệ thống</h2>
         <div id="logs" class="logs-container"></div>
       </section>
