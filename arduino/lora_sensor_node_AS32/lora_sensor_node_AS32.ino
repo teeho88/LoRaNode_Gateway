@@ -31,6 +31,7 @@
 #include <SoftwareSerial.h>
 #include <DHT.h>
 #include <ArduinoJson.h>
+#include <EEPROM.h>
 
 // Pin Definitions
 #define DHT1_PIN 4     // First DHT11 sensor
@@ -42,9 +43,15 @@
 #define LORA_RX 2  // Arduino RX (connect to LoRa TX)
 #define LORA_TX 3  // Arduino TX (connect to LoRa RX)
 #define LORA_AUX 5 // Optional: AUX pin for transmission status
+#define LORA_M0_PIN -1 // Set to a real pin (recommended D8) to allow AT config from UI
+#define LORA_M1_PIN -1 // Set to a real pin (recommended D9) to allow AT config from UI
 
 // Node Configuration
-#define NODE_ID "KHO_A"
+#define DEFAULT_NODE_ID "KHO_B"
+#define NODE_ID_MAX_LEN 15
+#define NODE_UID_LEN 8
+#define CONFIG_MAGIC 0x48544733UL // "HTG3"
+#define LORA_ROLLBACK_TIMEOUT_MS 60000UL
 
 // Thresholds
 #define TEMP_HIGH_THRESHOLD 32.0
@@ -60,6 +67,9 @@
 #define LORA_CHANNEL 23     // Channel 23 = 433MHz
 #define LORA_ADDRESS 0x0001 // Module address (0x0000 - 0xFFFF)
 #define LORA_NETID 0x00     // Network ID (0x00 - 0xFF)
+#define LORA_BAUD_RATE_CODE 9 // 9 = 9600 bps
+#define LORA_AIR_RATE 5      // 5 = 2.4 kbps
+#define LORA_POWER 0         // 0 = 20 dBm
 
 // Protocol markers
 #define START_MARKER '<'
@@ -68,6 +78,31 @@
 SoftwareSerial loraSerial(LORA_RX, LORA_TX);
 DHT dht1(DHT1_PIN, DHTTYPE);  // First sensor
 DHT dht2(DHT2_PIN, DHTTYPE);  // Second sensor
+
+struct LoraConfig {
+  uint16_t address;
+  uint8_t networkId;
+  uint8_t channel;
+  uint8_t baudRateCode;
+  uint8_t airRate;
+  uint8_t power;
+};
+
+struct NodeConfig {
+  uint32_t magic;
+  char nodeId[NODE_ID_MAX_LEN + 1];
+  char uid[NODE_UID_LEN + 1];
+  LoraConfig activeLora;
+  LoraConfig stagedLora;
+  LoraConfig rollbackLora;
+  bool hasStagedLora;
+  bool rollbackArmed;
+};
+
+NodeConfig nodeConfig;
+char nodeId[NODE_ID_MAX_LEN + 1] = DEFAULT_NODE_ID;
+char nodeUid[NODE_UID_LEN + 1] = "";
+unsigned long rollbackDeadline = 0;
 
 unsigned long lastSendTime = 0;
 unsigned long lastReadTime = 0;
@@ -99,6 +134,11 @@ void setup() {
 
   // Initialize AUX pin (optional)
   pinMode(LORA_AUX, INPUT);
+#if LORA_M0_PIN >= 0 && LORA_M1_PIN >= 0
+  pinMode(LORA_M0_PIN, OUTPUT);
+  pinMode(LORA_M1_PIN, OUTPUT);
+  setLoraNormalMode();
+#endif
 
   // Initialize DHT Sensors
   dht1.begin();
@@ -110,6 +150,8 @@ void setup() {
   loraSerial.begin(9600);
   delay(100);
 
+  loadNodeConfig();
+
   // Note: For first-time setup, you may need to configure the module
   // using AT commands. See configureLoRaModule() function below.
   // Uncomment the next line if you need to configure the module:
@@ -117,7 +159,9 @@ void setup() {
 
   Serial.println(F("LoRa Module Initialized!"));
   Serial.print(F("Node ID: "));
-  Serial.println(NODE_ID);
+  Serial.println(nodeId);
+  Serial.print(F("Node UID: "));
+  Serial.println(nodeUid);
   Serial.println(F("Ready to send data..."));
 }
 
@@ -142,6 +186,9 @@ void loop() {
 
   // Check for incoming commands
   receiveCommand();
+
+  // Roll back radio settings automatically if gateway does not confirm.
+  checkLoraRollback();
 }
 
 void readSensors() {
@@ -258,8 +305,9 @@ void setRelay(bool state) {
 
 void sendSensorData() {
   // Create JSON document (increased size for 2 sensors)
-  StaticJsonDocument<300> doc;
-  doc["id"] = NODE_ID;
+  StaticJsonDocument<360> doc;
+  doc["id"] = nodeId;
+  doc["uid"] = nodeUid;
 
   // Sensor 1 data
   doc["temp1"] = round(temperature1 * 10) / 10.0;  // Round to 1 decimal
@@ -320,7 +368,7 @@ void receiveCommand() {
       receivedData += c;
 
       // Prevent buffer overflow
-      if (receivedData.length() > 200) {
+      if (receivedData.length() > 320) {
         receiving = false;
         receivedData = "";
       }
@@ -333,7 +381,7 @@ void processCommand(String received) {
   Serial.println(received);
 
   // Parse JSON command
-  StaticJsonDocument<200> doc;
+  StaticJsonDocument<384> doc;
   DeserializationError error = deserializeJson(doc, received);
 
   if (error) {
@@ -344,8 +392,17 @@ void processCommand(String received) {
 
   // Check if command is for this node
   const char* targetId = doc["target"];
-  if (strcmp(targetId, NODE_ID) != 0 && strcmp(targetId, "ALL") != 0) {
+  const char* targetUid = doc["targetUid"];
+  bool uidMatches = targetUid && strcmp(targetUid, nodeUid) == 0;
+  bool idMatches = !targetUid && targetId && (strcmp(targetId, nodeId) == 0 || strcmp(targetId, "ALL") == 0);
+
+  if (!uidMatches && !idMatches) {
     return;  // Command not for this node
+  }
+
+  if (doc.containsKey("config")) {
+    processConfigCommand(doc["config"].as<JsonObject>());
+    return;
   }
 
   // Process command
@@ -369,7 +426,8 @@ void processCommand(String received) {
 
 void sendAcknowledgment(bool state) {
   StaticJsonDocument<200> doc;
-  doc["id"] = NODE_ID;
+  doc["id"] = nodeId;
+  doc["uid"] = nodeUid;
   doc["ack"] = true;
   doc["relay"] = state;
 
@@ -381,6 +439,269 @@ void sendAcknowledgment(bool state) {
 
   Serial.print(F("Sent ACK: "));
   Serial.println(jsonString);
+}
+
+void loadNodeConfig() {
+  EEPROM.get(0, nodeConfig);
+
+  if (nodeConfig.magic != CONFIG_MAGIC || nodeConfig.nodeId[0] == '\0') {
+    nodeConfig.magic = CONFIG_MAGIC;
+    strncpy(nodeConfig.nodeId, DEFAULT_NODE_ID, NODE_ID_MAX_LEN);
+    nodeConfig.nodeId[NODE_ID_MAX_LEN] = '\0';
+    generateNodeUid(nodeConfig.uid);
+    setDefaultLoraConfig(nodeConfig.activeLora);
+    nodeConfig.stagedLora = nodeConfig.activeLora;
+    nodeConfig.rollbackLora = nodeConfig.activeLora;
+    nodeConfig.hasStagedLora = false;
+    nodeConfig.rollbackArmed = false;
+    saveNodeConfig();
+  }
+
+  strncpy(nodeId, nodeConfig.nodeId, NODE_ID_MAX_LEN);
+  nodeId[NODE_ID_MAX_LEN] = '\0';
+  strncpy(nodeUid, nodeConfig.uid, NODE_UID_LEN);
+  nodeUid[NODE_UID_LEN] = '\0';
+
+  if (nodeConfig.rollbackArmed) {
+    Serial.println(F("Rollback was armed before reboot. Restoring previous LoRa config..."));
+    rollbackLoraConfig();
+  }
+}
+
+void saveNodeConfig() {
+  EEPROM.put(0, nodeConfig);
+}
+
+void setDefaultLoraConfig(LoraConfig &config) {
+  config.address = LORA_ADDRESS;
+  config.networkId = LORA_NETID;
+  config.channel = LORA_CHANNEL;
+  config.baudRateCode = LORA_BAUD_RATE_CODE;
+  config.airRate = LORA_AIR_RATE;
+  config.power = LORA_POWER;
+}
+
+void generateNodeUid(char* buffer) {
+  randomSeed(analogRead(A0) ^ micros());
+
+  for (int i = 0; i < NODE_UID_LEN; i++) {
+    byte value = random(0, 16);
+    buffer[i] = value < 10 ? char('0' + value) : char('A' + value - 10);
+  }
+
+  buffer[NODE_UID_LEN] = '\0';
+}
+
+void processConfigCommand(JsonObject config) {
+  char oldId[NODE_ID_MAX_LEN + 1];
+  strncpy(oldId, nodeId, NODE_ID_MAX_LEN);
+  oldId[NODE_ID_MAX_LEN] = '\0';
+
+  if (config["commitLora"] == true) {
+    commitLoraConfig();
+    sendConfigAcknowledgment(oldId, true, true, "LoRa config committed");
+    return;
+  }
+
+  if (config["rollbackLora"] == true) {
+    rollbackLoraConfig();
+    sendConfigAcknowledgment(oldId, false, true, "LoRa config rolled back");
+    return;
+  }
+
+  if (config.containsKey("id")) {
+    const char* newId = config["id"];
+    if (newId && strlen(newId) > 0 && strlen(newId) <= NODE_ID_MAX_LEN) {
+      strncpy(nodeConfig.nodeId, newId, NODE_ID_MAX_LEN);
+      nodeConfig.nodeId[NODE_ID_MAX_LEN] = '\0';
+      strncpy(nodeId, nodeConfig.nodeId, NODE_ID_MAX_LEN);
+      nodeId[NODE_ID_MAX_LEN] = '\0';
+    }
+  }
+
+  bool loraRequested = false;
+  bool loraApplied = false;
+  const char* message = "Configuration saved";
+
+  if (config.containsKey("lora")) {
+    JsonObject lora = config["lora"].as<JsonObject>();
+    loraRequested = true;
+
+    nodeConfig.stagedLora = nodeConfig.activeLora;
+    if (lora.containsKey("address")) nodeConfig.stagedLora.address = lora["address"].as<uint16_t>();
+    if (lora.containsKey("networkId")) nodeConfig.stagedLora.networkId = lora["networkId"].as<uint8_t>();
+    if (lora.containsKey("channel")) nodeConfig.stagedLora.channel = lora["channel"].as<uint8_t>();
+    if (lora.containsKey("baudRateCode")) nodeConfig.stagedLora.baudRateCode = lora["baudRateCode"].as<uint8_t>();
+    if (lora.containsKey("airRate")) nodeConfig.stagedLora.airRate = lora["airRate"].as<uint8_t>();
+    if (lora.containsKey("power")) nodeConfig.stagedLora.power = lora["power"].as<uint8_t>();
+    nodeConfig.hasStagedLora = true;
+
+    if (config["applyLora"] == true) {
+      loraApplied = activateStagedLoraConfig();
+      message = loraApplied
+        ? "LoRa config applied; waiting for commit"
+        : "LoRa config staged; M0/M1 config pins are not enabled";
+    } else {
+      message = "ID saved; LoRa params staged, not activated";
+    }
+  }
+
+  saveNodeConfig();
+
+  Serial.print(F("Config updated. Old ID: "));
+  Serial.print(oldId);
+  Serial.print(F(", New ID: "));
+  Serial.println(nodeId);
+
+  sendConfigAcknowledgment(oldId, loraApplied, loraRequested, message);
+}
+
+void sendConfigAcknowledgment(const char* oldId, bool loraApplied, bool loraRequested, const char* message) {
+  StaticJsonDocument<300> doc;
+  doc["id"] = nodeId;
+  doc["uid"] = nodeUid;
+  doc["oldId"] = oldId;
+  doc["ack"] = true;
+  doc["configAck"] = true;
+  doc["loraApplied"] = loraApplied;
+  doc["rollbackArmed"] = nodeConfig.rollbackArmed;
+  doc["message"] = message;
+
+  String jsonString;
+  serializeJson(doc, jsonString);
+
+  delay(100);
+  sendLoRaMessage(jsonString);
+
+  Serial.print(F("Sent CONFIG ACK: "));
+  Serial.println(jsonString);
+}
+
+bool activateStagedLoraConfig() {
+  if (!nodeConfig.hasStagedLora) {
+    return false;
+  }
+
+  nodeConfig.rollbackLora = nodeConfig.activeLora;
+  nodeConfig.activeLora = nodeConfig.stagedLora;
+  nodeConfig.rollbackArmed = true;
+  rollbackDeadline = millis() + LORA_ROLLBACK_TIMEOUT_MS;
+  saveNodeConfig();
+
+  if (!applyLoraConfig(nodeConfig.activeLora)) {
+    rollbackLoraConfig();
+    return false;
+  }
+
+  return true;
+}
+
+bool applyLoraConfig(const LoraConfig &config) {
+#if LORA_M0_PIN >= 0 && LORA_M1_PIN >= 0
+  setLoraConfigMode();
+  delay(500);
+
+  sendAtAddress(config.address);
+  sendAtNetworkId(config.networkId);
+  sendAtParameter(config.baudRateCode, config.airRate, config.power);
+  sendAtChannel(config.channel);
+  loraSerial.println(F("AT+SAVE"));
+  delay(500);
+  readLoRaResponse();
+
+  setLoraNormalMode();
+  delay(500);
+  return true;
+#else
+  return false;
+#endif
+}
+
+void commitLoraConfig() {
+  nodeConfig.rollbackArmed = false;
+  nodeConfig.hasStagedLora = false;
+  nodeConfig.rollbackLora = nodeConfig.activeLora;
+  rollbackDeadline = 0;
+  saveNodeConfig();
+  Serial.println(F("LoRa config committed"));
+}
+
+void rollbackLoraConfig() {
+  Serial.println(F("Rolling back LoRa config..."));
+  LoraConfig previous = nodeConfig.rollbackLora;
+  applyLoraConfig(previous);
+  nodeConfig.activeLora = previous;
+  nodeConfig.rollbackArmed = false;
+  rollbackDeadline = 0;
+  saveNodeConfig();
+}
+
+void checkLoraRollback() {
+  if (!nodeConfig.rollbackArmed || rollbackDeadline == 0) {
+    return;
+  }
+
+  if ((long)(millis() - rollbackDeadline) >= 0) {
+    rollbackLoraConfig();
+  }
+}
+
+#if LORA_M0_PIN >= 0 && LORA_M1_PIN >= 0
+void setLoraConfigMode() {
+  digitalWrite(LORA_M0_PIN, HIGH);
+  digitalWrite(LORA_M1_PIN, HIGH);
+}
+
+void setLoraNormalMode() {
+  digitalWrite(LORA_M0_PIN, LOW);
+  digitalWrite(LORA_M1_PIN, LOW);
+}
+#endif
+
+void printHex4(Print &out, uint16_t value) {
+  char buffer[5];
+  snprintf(buffer, sizeof(buffer), "%04X", value);
+  out.print(buffer);
+}
+
+void printHex2(Print &out, uint8_t value) {
+  char buffer[3];
+  snprintf(buffer, sizeof(buffer), "%02X", value);
+  out.print(buffer);
+}
+
+void sendAtAddress(uint16_t address) {
+  loraSerial.print(F("AT+ADDRESS="));
+  printHex4(loraSerial, address);
+  loraSerial.println();
+  delay(200);
+  readLoRaResponse();
+}
+
+void sendAtNetworkId(uint8_t networkId) {
+  loraSerial.print(F("AT+NETWORKID="));
+  printHex2(loraSerial, networkId);
+  loraSerial.println();
+  delay(200);
+  readLoRaResponse();
+}
+
+void sendAtParameter(uint8_t baudRateCode, uint8_t airRate, uint8_t power) {
+  loraSerial.print(F("AT+PARAMETER="));
+  loraSerial.print(baudRateCode);
+  loraSerial.print(F(","));
+  loraSerial.print(airRate);
+  loraSerial.print(F(","));
+  loraSerial.println(power);
+  delay(200);
+  readLoRaResponse();
+}
+
+void sendAtChannel(uint8_t channel) {
+  loraSerial.print(F("AT+CHANNEL="));
+  loraSerial.println(channel);
+  delay(200);
+  readLoRaResponse();
 }
 
 void waitForAux() {

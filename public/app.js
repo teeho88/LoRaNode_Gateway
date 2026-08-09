@@ -7,6 +7,11 @@ const state = {
   history: [],
   selectedNode: null,
   dailyStats: [],
+  nodeConfigs: new Map(),
+  loraNetwork: null,
+  gatewaySync: null,
+  analyticsOverview: null,
+  nodeHealth: null,
   isFiltered: false, // Track if filters are active
   filters: {
     date: null,
@@ -22,6 +27,23 @@ const connectionStatus = document.getElementById('connection-status');
 const systemInfo = document.getElementById('system-info');
 const logsContainer = document.getElementById('logs');
 const nodeSelect = document.getElementById('node-select');
+const duplicateIdWarning = document.getElementById('duplicate-id-warning');
+const configForm = document.getElementById('node-config-form');
+const configGatewayAddress = document.getElementById('config-gateway-address');
+const configTarget = document.getElementById('config-target');
+const configNodeId = document.getElementById('config-node-id');
+const configAddress = document.getElementById('config-address');
+const configNetworkId = document.getElementById('config-network-id');
+const configChannel = document.getElementById('config-channel');
+const configBaudRateCode = document.getElementById('config-baud-rate-code');
+const configAirRate = document.getElementById('config-air-rate');
+const configPower = document.getElementById('config-power');
+const configStatus = document.getElementById('config-status');
+const activateConfigBtn = document.getElementById('activate-config');
+const commitConfigBtn = document.getElementById('commit-config');
+const rollbackConfigBtn = document.getElementById('rollback-config');
+const gatewaySyncStatus = document.getElementById('gateway-sync-status');
+const gatewaySyncConfirmBtn = document.getElementById('gateway-sync-confirm');
 const dateFilter = document.getElementById('date-filter');
 const startTimeFilter = document.getElementById('start-time-filter');
 const endTimeFilter = document.getElementById('end-time-filter');
@@ -30,11 +52,205 @@ const clearFilterBtn = document.getElementById('clear-filter');
 const filterStatus = document.getElementById('filter-status');
 const chartCanvas = document.getElementById('chart');
 const chartCtx = chartCanvas.getContext('2d');
+const tabButtons = document.querySelectorAll('.tab-button');
+const tabPanels = document.querySelectorAll('.tab-panel');
+const analyticsNodeSelect = document.getElementById('analytics-node-select');
+const analyticsWindowSelect = document.getElementById('analytics-window');
+const analyticsForecastSelect = document.getElementById('analytics-forecast');
+const analyticsRefreshBtn = document.getElementById('analytics-refresh');
+const analyticsSummary = document.getElementById('analytics-summary');
+const analyticsCards = document.getElementById('analytics-cards');
+
+function getNodeKey(node) {
+  return node.nodeKey || node.uid || node.id;
+}
+
+function getNodeLabel(node) {
+  return node.uid ? `${node.id} (${node.uid})` : node.id;
+}
+
+function getHistoryNodeKey(record) {
+  return record.nodeKey || record.uid || record.id;
+}
+
+function matchesSelectedNode(record, selectedNode) {
+  if (!selectedNode) {
+    return true;
+  }
+
+  const recordKey = getHistoryNodeKey(record);
+  return recordKey === selectedNode || record.id === selectedNode || record.uid === selectedNode;
+}
+
+function getConfigActionTarget() {
+  const selectedKey = configTarget.value || '';
+  const selectedNode = state.nodes.get(selectedKey);
+  const fallbackNodeId = configNodeId.value.trim();
+
+  return {
+    target: selectedNode?.id || selectedKey || fallbackNodeId,
+    targetUid: selectedNode?.uid || ''
+  };
+}
+
+function updateDuplicateIdWarning() {
+  if (!duplicateIdWarning) {
+    return;
+  }
+
+  const duplicateIds = new Map();
+  state.nodes.forEach(node => {
+    duplicateIds.set(node.id, (duplicateIds.get(node.id) || 0) + 1);
+  });
+
+  const conflicts = Array.from(duplicateIds.entries())
+    .filter(([, count]) => count > 1)
+    .map(([id]) => id);
+
+  if (conflicts.length === 0) {
+    duplicateIdWarning.textContent = '';
+    duplicateIdWarning.classList.remove('active');
+    return;
+  }
+
+  duplicateIdWarning.textContent = `Phát hiện ID trùng: ${conflicts.join(', ')}. Gateway vẫn phân biệt theo UID, nhưng bạn nên đổi ID để dễ quản lý.`;
+  duplicateIdWarning.classList.add('active');
+}
+
+function updateGatewaySyncStatus(syncState) {
+  if (!gatewaySyncStatus || !syncState) {
+    return;
+  }
+
+  state.gatewaySync = syncState;
+  gatewaySyncStatus.classList.remove('synced', 'pending', 'error');
+  const required = syncState.requiredProfileVersion || 'N/A';
+  const applied = syncState.appliedProfileVersion || 'chưa xác nhận';
+  const suffix = ` (required: ${required}, applied: ${applied})`;
+
+  if (syncState.inSync) {
+    gatewaySyncStatus.textContent = `Đã đồng bộ${suffix}`;
+    gatewaySyncStatus.classList.add('synced');
+  } else {
+    gatewaySyncStatus.textContent = `Chưa đồng bộ${suffix}`;
+    gatewaySyncStatus.classList.add('pending');
+  }
+}
+
+function trendClass(direction) {
+  if (direction === 'rising') return 'analytics-trend-up';
+  if (direction === 'falling') return 'analytics-trend-down';
+  return 'analytics-trend-stable';
+}
+
+function trendSymbol(direction) {
+  if (direction === 'rising') return '↑';
+  if (direction === 'falling') return '↓';
+  return '→';
+}
+
+function getHealthForNode(node) {
+  if (!state.nodeHealth) {
+    return null;
+  }
+
+  return state.nodeHealth.nodes.find(item =>
+    item.nodeKey === node.nodeKey ||
+    item.uid === node.uid ||
+    item.nodeId === node.nodeId
+  );
+}
+
+function healthLabel(level) {
+  if (level === 'critical') return 'CRITICAL';
+  if (level === 'warning') return 'WARNING';
+  return 'GOOD';
+}
+
+function renderAnalytics() {
+  if (!state.analyticsOverview) {
+    analyticsSummary.textContent = 'Chưa có dữ liệu phân tích';
+    analyticsCards.innerHTML = '<div class="loading">Chưa có dữ liệu</div>';
+    return;
+  }
+
+  const overview = state.analyticsOverview;
+  const health = state.nodeHealth;
+  analyticsSummary.textContent =
+    `Cửa sổ ${overview.windowMinutes} phút | Dự báo ${overview.forecastMinutes} phút | `
+    + `Nhiệt độ TB: ${overview.summary.avgTemp ?? '--'}°C | Độ ẩm TB: ${overview.summary.avgHum ?? '--'}% | `
+    + `Nguy cơ cao: ${overview.summary.highRiskNodes} | Nguy cơ vừa: ${overview.summary.mediumRiskNodes} | `
+    + `Node có bất thường: ${overview.summary.anomalyNodes}`
+    + (health ? ` | Health: ${health.summary.good} tốt, ${health.summary.warning} cảnh báo, ${health.summary.critical} nguy cấp, ${health.summary.offline} offline` : '');
+
+  const displayNodes = new Map();
+  overview.nodes.forEach(node => {
+    displayNodes.set(node.nodeKey, node);
+  });
+  (health?.nodes || []).forEach(nodeHealth => {
+    if (!displayNodes.has(nodeHealth.nodeKey)) {
+      displayNodes.set(nodeHealth.nodeKey, {
+        nodeKey: nodeHealth.nodeKey,
+        nodeId: nodeHealth.nodeId,
+        uid: nodeHealth.uid,
+        sampleCount: nodeHealth.sampleCount,
+        current: nodeHealth.current,
+        forecast: nodeHealth.analytics?.forecast || { minutes: overview.forecastMinutes, temp: '--', hum: '--' },
+        trend: nodeHealth.analytics?.trend || {
+          tempPerHour: '--',
+          humPerHour: '--',
+          tempDirection: 'stable',
+          humDirection: 'stable'
+        },
+        anomalyCount: nodeHealth.analytics?.anomalyCount || 0,
+        riskLevel: nodeHealth.analytics?.riskLevel || 'low'
+      });
+    }
+  });
+
+  if (!displayNodes.size) {
+    analyticsCards.innerHTML = '<div class="loading">Không có đủ dữ liệu để phân tích trong cửa sổ đã chọn</div>';
+    return;
+  }
+
+  analyticsCards.innerHTML = '';
+  displayNodes.forEach(node => {
+    const card = document.createElement('article');
+    const nodeHealth = getHealthForNode(node);
+    const healthClass = nodeHealth ? ` health-${nodeHealth.healthLevel}` : '';
+    card.className = `analytics-card risk-${node.riskLevel}${healthClass}`;
+
+    const label = node.uid ? `${node.nodeId} (${node.uid})` : node.nodeId;
+    const recommendations = nodeHealth?.recommendations?.slice(0, 2).join(' ') || 'Chua co du lieu health.';
+    card.innerHTML = `
+      <div class="analytics-node">${label}</div>
+      ${nodeHealth ? `<div class="analytics-row"><span>Sức khỏe</span><strong>${nodeHealth.healthScore}/100 ${healthLabel(nodeHealth.healthLevel)}</strong></div>` : ''}
+      ${nodeHealth ? `<div class="analytics-row"><span>Online</span><span>${nodeHealth.online ? 'OK' : 'OFFLINE'} | ${nodeHealth.lastSeenSeconds}s</span></div>` : ''}
+      ${nodeHealth ? `<div class="analytics-row"><span>Nhịp gói</span><span>${nodeHealth.expectedInterval ? `${nodeHealth.expectedInterval}s` : '--'}</span></div>` : ''}
+      <div class="analytics-row"><span>Rủi ro</span><strong>${node.riskLevel.toUpperCase()}</strong></div>
+      <div class="analytics-row"><span>Mẫu phân tích</span><span>${node.sampleCount}</span></div>
+      <div class="analytics-row"><span>Hiện tại</span><span>${node.current.temp}°C | ${node.current.hum}%</span></div>
+      <div class="analytics-row"><span>Dự báo +${node.forecast.minutes}p</span><span>${node.forecast.temp}°C | ${node.forecast.hum}%</span></div>
+      <div class="analytics-row"><span>Xu hướng nhiệt</span><span class="${trendClass(node.trend.tempDirection)}">${trendSymbol(node.trend.tempDirection)} ${node.trend.tempPerHour}/h</span></div>
+      <div class="analytics-row"><span>Xu hướng ẩm</span><span class="${trendClass(node.trend.humDirection)}">${trendSymbol(node.trend.humDirection)} ${node.trend.humPerHour}/h</span></div>
+      <div class="analytics-row"><span>Bất thường</span><strong>${node.anomalyCount}</strong></div>
+      <div class="analytics-recommendation">${recommendations}</div>
+    `;
+
+    analyticsCards.appendChild(card);
+  });
+}
 
 // Connection status
 socket.on('connect', () => {
   updateConnectionStatus(true);
   addLog('success', 'Đã kết nối tới gateway');
+});
+
+tabButtons.forEach(button => {
+  button.addEventListener('click', () => {
+    switchTab(button.dataset.tab);
+  });
 });
 
 socket.on('disconnect', () => {
@@ -46,9 +262,12 @@ socket.on('disconnect', () => {
 socket.on('initialData', (data) => {
   console.log('Received initial data:', data);
   data.nodes.forEach(node => {
-    state.nodes.set(node.id, node);
+    state.nodes.set(getNodeKey(node), node);
   });
   state.history = data.history || [];
+  if (data.gatewaySync) {
+    updateGatewaySyncStatus(data.gatewaySync);
+  }
   state.isFiltered = false; // Ensure chart is in real-time mode on connect
   renderNodes();
   updateNodeSelect();
@@ -57,13 +276,17 @@ socket.on('initialData', (data) => {
   fetchRecentHistory();
 
   fetchDailyStats();
+  fetchLoraNetwork();
+  fetchGatewaySync();
+  fetchAnalyticsOverview();
+  fetchNodeConfigs();
   addLog('info', `Đã tải ${data.nodes.length} nodes, đang tải dữ liệu biểu đồ...`);
 });
 
 // Receive real-time sensor data
 socket.on('sensorData', (data) => {
   console.log('Sensor data:', data);
-  state.nodes.set(data.id, data);
+  state.nodes.set(getNodeKey(data), data);
 
   // Only update history and chart if no filter is active
   if (!state.isFiltered) {
@@ -112,6 +335,47 @@ socket.on('commandError', (data) => {
   addLog('error', `Lỗi: ${data.message}`);
 });
 
+socket.on('configSent', (data) => {
+  state.nodeConfigs.delete(data.config.target);
+  if (data.config.targetUid) {
+    state.nodeConfigs.delete(data.config.targetUid);
+  }
+  state.nodeConfigs.set(data.config.targetUid || data.config.nodeId, data.config);
+  configStatus.textContent = `Đã gửi cấu hình tới ${data.config.target}; profile LoRa đang ở trạng thái staged`;
+  configStatus.style.color = '#28a745';
+  addLog('success', `Đã gửi cấu hình node: ${JSON.stringify(data.command)}`);
+});
+
+socket.on('loraNetworkUpdated', (data) => {
+  state.loraNetwork = data.data;
+  fillLoraNetworkForm(data.data);
+  addLog('success', 'Đã lưu profile mạng LoRa dùng chung');
+});
+
+socket.on('gatewaySyncUpdated', (syncState) => {
+  updateGatewaySyncStatus(syncState);
+});
+
+socket.on('configAck', (data) => {
+  const loraNote = data.loraApplied ? 'LoRa đã áp dụng' : 'LoRa đã lưu/stage, chưa kích hoạt';
+  const rollbackNote = data.rollbackArmed ? ' - rollback tự động đang bật' : '';
+  configStatus.textContent = `${data.nodeId} xác nhận cấu hình (${loraNote}${rollbackNote})`;
+  configStatus.style.color = '#28a745';
+  addLog('success', `${data.nodeId} xác nhận cấu hình. ${data.message || loraNote}`);
+});
+
+socket.on('configActionSent', (data) => {
+  configStatus.textContent = `${data.message}: ${data.target}`;
+  configStatus.style.color = data.action === 'rollback' ? '#dc3545' : '#667eea';
+  addLog('info', `${data.message}: ${data.target}`);
+});
+
+socket.on('configError', (data) => {
+  configStatus.textContent = `Lỗi: ${data.message}`;
+  configStatus.style.color = '#dc3545';
+  addLog('error', `Lỗi cấu hình: ${data.message}`);
+});
+
 // Update connection status indicator
 function updateConnectionStatus(connected) {
   if (connected) {
@@ -120,6 +384,41 @@ function updateConnectionStatus(connected) {
   } else {
     connectionStatus.innerHTML = '🔴 Mất kết nối';
     connectionStatus.classList.remove('connected');
+  }
+}
+
+function switchTab(tabName) {
+  const availableTabs = Array.from(tabButtons).map(button => button.dataset.tab);
+  const nextTab = availableTabs.includes(tabName) ? tabName : 'nodes';
+
+  tabButtons.forEach(button => {
+    const isActive = button.dataset.tab === nextTab;
+    button.classList.toggle('active', isActive);
+    button.setAttribute('aria-selected', String(isActive));
+  });
+
+  tabPanels.forEach(panel => {
+    panel.classList.toggle('active', panel.dataset.tabPanel === nextTab);
+  });
+
+  localStorage.setItem('activeDashboardTab', nextTab);
+
+  if (nextTab === 'chart') {
+    drawChart();
+  }
+
+  if (nextTab === 'stats') {
+    fetchDailyStats();
+  }
+
+  if (nextTab === 'config') {
+    fetchLoraNetwork();
+    fetchNodeConfigs();
+    fetchGatewaySync();
+  }
+
+  if (nextTab === 'analytics') {
+    fetchAnalyticsOverview();
   }
 }
 
@@ -141,9 +440,10 @@ function renderNodes() {
 
 // Create a node card
 function createNodeCard(node) {
+  const nodeKey = getNodeKey(node);
   const card = document.createElement('div');
   card.className = 'node-card';
-  card.id = `node-${node.id}`;
+  card.id = `node-${nodeKey}`;
 
   // Check if node is online (data received in last 30 seconds)
   const isOnline = (Date.now() - node.receivedAt) < 30000;
@@ -227,6 +527,7 @@ function createNodeCard(node) {
   card.innerHTML = `
     <div class="node-header">
       <span class="node-id">${node.id}</span>
+      ${node.uid ? `<span class="node-uid">UID: ${node.uid}</span>` : ''}
       <span class="node-status ${isOnline ? 'online' : 'offline'}">
         ${isOnline ? 'ONLINE' : 'OFFLINE'}
       </span>
@@ -243,9 +544,9 @@ function createNodeCard(node) {
     </div>
 
     <div class="node-controls">
-      <button class="btn btn-on" onclick="controlRelay('${node.id}', true)">BẬT</button>
-      <button class="btn btn-off" onclick="controlRelay('${node.id}', false)">TẮT</button>
-      <button class="btn btn-auto" onclick="setAutoMode('${node.id}')">AUTO</button>
+      <button class="btn btn-on" onclick="controlRelay('${nodeKey}', true)">BẬT</button>
+      <button class="btn btn-off" onclick="controlRelay('${nodeKey}', false)">TẮT</button>
+      <button class="btn btn-auto" onclick="setAutoMode('${nodeKey}')">AUTO</button>
     </div>
 
     <div class="timestamp">Cập nhật ${timeAgo} trước</div>
@@ -256,7 +557,7 @@ function createNodeCard(node) {
 
 // Update existing node card
 function updateNodeCard(node) {
-  const existingCard = document.getElementById(`node-${node.id}`);
+  const existingCard = document.getElementById(`node-${getNodeKey(node)}`);
   if (existingCard) {
     const newCard = createNodeCard(node);
     existingCard.replaceWith(newCard);
@@ -266,38 +567,80 @@ function updateNodeCard(node) {
 }
 
 // Control relay
-function controlRelay(nodeId, state) {
-  const command = {
-    target: nodeId,
-    relay: state
-  };
+function buildNodeCommand(nodeKey) {
+  const node = state.nodes.get(nodeKey);
+  if (!node) {
+    throw new Error(`Không tìm thấy node ${nodeKey}`);
+  }
+
+  const command = { target: node.id };
+  if (node.uid) {
+    command.targetUid = node.uid;
+  }
+
+  return { command, node };
+}
+
+function controlRelay(nodeKey, relayState) {
+  const { command, node } = buildNodeCommand(nodeKey);
+  command.relay = relayState;
+
   socket.emit('controlRelay', command);
-  addLog('info', `Gửi lệnh ${state ? 'BẬT' : 'TẮT'} relay tới ${nodeId}`);
+  addLog('info', `Gửi lệnh ${relayState ? 'BẬT' : 'TẮT'} relay tới ${getNodeLabel(node)}`);
 }
 
 // Set auto mode
-function setAutoMode(nodeId) {
-  const command = {
-    target: nodeId,
-    auto: true
-  };
+function setAutoMode(nodeKey) {
+  const { command, node } = buildNodeCommand(nodeKey);
+  command.auto = true;
+
   socket.emit('controlRelay', command);
-  addLog('info', `Chuyển ${nodeId} sang chế độ AUTO`);
+  addLog('info', `Chuyển ${getNodeLabel(node)} sang chế độ AUTO`);
 }
 
 // Update node select dropdown
 function updateNodeSelect() {
-  const currentValue = nodeSelect.value;
+  const currentValue = state.selectedNode || nodeSelect.value;
+  const currentConfigTarget = configTarget.value;
+  const currentAnalyticsTarget = analyticsNodeSelect.value;
   nodeSelect.innerHTML = '<option value="" disabled selected>-- Chọn Node --</option>';
+  configTarget.innerHTML = '<option value="" disabled selected>-- Chọn Node --</option>';
+  analyticsNodeSelect.innerHTML = '<option value="">-- Tất cả Node --</option>';
 
-  state.nodes.forEach((node, id) => {
+  state.nodes.forEach((node, nodeKey) => {
     const option = document.createElement('option');
-    option.value = id;
-    option.textContent = id;
+    option.value = nodeKey;
+    option.textContent = getNodeLabel(node);
     nodeSelect.appendChild(option);
+
+    const configOption = document.createElement('option');
+    configOption.value = nodeKey;
+    configOption.textContent = getNodeLabel(node);
+    configTarget.appendChild(configOption);
+
+    const analyticsOption = document.createElement('option');
+    analyticsOption.value = nodeKey;
+    analyticsOption.textContent = getNodeLabel(node);
+    analyticsNodeSelect.appendChild(analyticsOption);
   });
 
-  nodeSelect.value = currentValue;
+  if (currentValue && state.nodes.has(currentValue)) {
+    state.selectedNode = currentValue;
+    nodeSelect.value = currentValue;
+  } else {
+    state.selectedNode = state.nodes.size > 0 ? state.nodes.keys().next().value : null;
+    nodeSelect.value = state.selectedNode || '';
+  }
+
+  if (currentConfigTarget && state.nodes.has(currentConfigTarget)) {
+    configTarget.value = currentConfigTarget;
+  }
+
+  if (currentAnalyticsTarget && state.nodes.has(currentAnalyticsTarget)) {
+    analyticsNodeSelect.value = currentAnalyticsTarget;
+  }
+
+  updateDuplicateIdWarning();
 }
 
 // Node select change handler
@@ -324,6 +667,137 @@ nodeSelect.addEventListener('change', (e) => {
   }
 });
 
+configTarget.addEventListener('change', (e) => {
+  fillConfigForm(e.target.value);
+});
+
+gatewaySyncConfirmBtn.addEventListener('click', () => {
+  confirmGatewaySync();
+});
+
+analyticsRefreshBtn.addEventListener('click', () => {
+  fetchAnalyticsOverview();
+});
+
+analyticsNodeSelect.addEventListener('change', () => {
+  fetchAnalyticsOverview();
+});
+
+analyticsWindowSelect.addEventListener('change', () => {
+  fetchAnalyticsOverview();
+});
+
+analyticsForecastSelect.addEventListener('change', () => {
+  fetchAnalyticsOverview();
+});
+
+configForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+
+  try {
+    configStatus.textContent = 'Đang lưu profile mạng chung...';
+    configStatus.style.color = '#667eea';
+
+    const loraNetwork = getLoraNetworkFromForm();
+    const response = await fetch('/api/config/network', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(loraNetwork)
+    });
+    const result = await response.json();
+
+    if (!result.success) {
+      throw new Error(result.message);
+    }
+
+    state.loraNetwork = result.data;
+    fillLoraNetworkForm(result.data);
+    if (result.gatewaySync) {
+      updateGatewaySyncStatus(result.gatewaySync);
+    }
+
+    const command = {
+      target: state.nodes.get(configTarget.value)?.id || configTarget.value,
+      targetUid: state.nodes.get(configTarget.value)?.uid || '',
+      nodeId: configNodeId.value.trim(),
+      address: configAddress.value
+    };
+
+    socket.emit('configureNode', command);
+    configStatus.textContent = 'Đang gửi cấu hình node với profile mạng chung...';
+  } catch (err) {
+    configStatus.textContent = `Lỗi: ${err.message}`;
+    configStatus.style.color = '#dc3545';
+    addLog('error', `Lỗi cấu hình mạng LoRa: ${err.message}`);
+  }
+});
+
+activateConfigBtn.addEventListener('click', () => {
+  const { target, targetUid } = getConfigActionTarget();
+  if (!target) {
+    configStatus.textContent = 'Vui lòng chọn node trước khi kích hoạt';
+    configStatus.style.color = '#dc3545';
+    return;
+  }
+
+  if (state.gatewaySync && !state.gatewaySync.inSync) {
+    configStatus.textContent = 'Gateway chưa đồng bộ profile mới. Hãy bấm "Tôi đã cấu hình gateway" trước khi Activate.';
+    configStatus.style.color = '#dc3545';
+    addLog('warning', 'Chặn activate vì gateway chưa đồng bộ profile mạng.');
+    return;
+  }
+
+  socket.emit('activateNodeConfig', { target, targetUid });
+  configStatus.textContent = 'Đã gửi lệnh kích hoạt. Hãy cấu hình gateway sang cùng profile mới rồi mới Commit; nếu không node sẽ tự rollback.';
+  configStatus.style.color = '#f0ad4e';
+});
+
+commitConfigBtn.addEventListener('click', () => {
+  const { target, targetUid } = getConfigActionTarget();
+  if (!target) {
+    configStatus.textContent = 'Vui lòng chọn node trước khi commit';
+    configStatus.style.color = '#dc3545';
+    return;
+  }
+
+  socket.emit('commitNodeConfig', { target, targetUid });
+  configStatus.textContent = 'Đã gửi lệnh commit cấu hình LoRa';
+  configStatus.style.color = '#28a745';
+});
+
+rollbackConfigBtn.addEventListener('click', () => {
+  const { target, targetUid } = getConfigActionTarget();
+  if (!target) {
+    configStatus.textContent = 'Vui lòng chọn node trước khi rollback';
+    configStatus.style.color = '#dc3545';
+    return;
+  }
+
+  socket.emit('rollbackNodeConfig', { target, targetUid });
+  configStatus.textContent = 'Đã gửi lệnh rollback cấu hình LoRa';
+  configStatus.style.color = '#dc3545';
+});
+
+function getLoraNetworkFromForm() {
+  return {
+    gatewayAddress: configGatewayAddress.value,
+    networkId: configNetworkId.value,
+    channel: configChannel.value,
+    baudRateCode: configBaudRateCode.value,
+    airRate: configAirRate.value,
+    power: configPower.value
+  };
+}
+
+function fillLoraNetworkForm(config) {
+  configGatewayAddress.value = config.gatewayAddress;
+  configNetworkId.value = config.networkId;
+  configChannel.value = config.channel;
+  configBaudRateCode.value = config.baudRateCode;
+  configAirRate.value = config.airRate;
+  configPower.value = config.power;
+}
+
 // Draw chart (simple canvas-based chart)
 function drawChart() {
   const width = chartCanvas.width;
@@ -345,7 +819,7 @@ function drawChart() {
   // Filter data by selected node
   let data = state.history;
   if (state.selectedNode) {
-    data = data.filter(d => d.id === state.selectedNode);
+    data = data.filter(d => matchesSelectedNode(d, state.selectedNode));
   }
 
   if (data.length < 2) {
@@ -442,7 +916,11 @@ async function fetchSystemStatus() {
     const response = await fetch('/api/status');
     const data = await response.json();
     if (data.success) {
-      systemInfo.textContent = `Nodes: ${data.nodes} | Clients: ${data.connectedClients} | RAM: ${data.memory.heapUsed} | Uptime: ${data.uptime}`;
+      const syncFlag = data.gatewayLoraSync?.inSync ? 'GatewaySync:OK' : 'GatewaySync:PENDING';
+      systemInfo.textContent = `Nodes: ${data.nodes} | Clients: ${data.connectedClients} | ${syncFlag} | RAM: ${data.memory.heapUsed} | Uptime: ${data.uptime}`;
+      if (data.gatewayLoraSync) {
+        updateGatewaySyncStatus(data.gatewayLoraSync);
+      }
     }
   } catch (err) {
     console.error('Failed to fetch system status:', err);
@@ -461,6 +939,121 @@ async function fetchDailyStats() {
   } catch (err) {
     console.error('Failed to fetch daily stats:', err);
   }
+}
+
+async function fetchNodeConfigs() {
+  try {
+    const response = await fetch('/api/config/nodes');
+    const data = await response.json();
+    if (data.success) {
+      state.nodeConfigs.clear();
+      data.data.forEach(config => {
+        state.nodeConfigs.set(config.targetUid || config.nodeId, config);
+      });
+
+      if (configTarget.value) {
+        fillConfigForm(configTarget.value);
+      }
+    }
+  } catch (err) {
+    console.error('Failed to fetch node configs:', err);
+  }
+}
+
+async function fetchLoraNetwork() {
+  try {
+    const response = await fetch('/api/config/network');
+    const data = await response.json();
+    if (data.success) {
+      state.loraNetwork = data.data;
+      fillLoraNetworkForm(data.data);
+      if (data.gatewaySync) {
+        updateGatewaySyncStatus(data.gatewaySync);
+      }
+    }
+  } catch (err) {
+    console.error('Failed to fetch LoRa network config:', err);
+  }
+}
+
+async function fetchGatewaySync() {
+  try {
+    const response = await fetch('/api/config/gateway/sync');
+    const data = await response.json();
+    if (data.success) {
+      updateGatewaySyncStatus(data.data);
+    }
+  } catch (err) {
+    console.error('Failed to fetch gateway sync status:', err);
+  }
+}
+
+async function confirmGatewaySync() {
+  try {
+    const response = await fetch('/api/config/gateway/confirm', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        appliedProfileVersion: state.loraNetwork?.updatedAt || '',
+        note: 'Gateway confirmed via dashboard'
+      })
+    });
+    const data = await response.json();
+    if (!data.success) {
+      throw new Error(data.message || 'Xác nhận đồng bộ thất bại');
+    }
+    updateGatewaySyncStatus(data.data);
+    configStatus.textContent = 'Đã xác nhận gateway đã đổi profile mạng mới';
+    configStatus.style.color = '#17a2b8';
+    addLog('success', 'Đã xác nhận gateway đồng bộ profile LoRa');
+  } catch (err) {
+    if (gatewaySyncStatus) {
+      gatewaySyncStatus.classList.remove('synced', 'pending');
+      gatewaySyncStatus.classList.add('error');
+    }
+    addLog('error', `Lỗi xác nhận gateway: ${err.message}`);
+  }
+}
+
+async function fetchAnalyticsOverview() {
+  try {
+    const params = new URLSearchParams();
+    if (analyticsNodeSelect.value) {
+      params.append('nodeId', analyticsNodeSelect.value);
+    }
+    params.append('windowMinutes', analyticsWindowSelect.value || '120');
+    params.append('forecastMinutes', analyticsForecastSelect.value || '30');
+
+    const queryString = params.toString();
+    const [analyticsResponse, healthResponse] = await Promise.all([
+      fetch(`/api/analytics/overview?${queryString}`),
+      fetch(`/api/analytics/health?${queryString}`)
+    ]);
+
+    const data = await analyticsResponse.json();
+    const healthData = await healthResponse.json();
+
+    if (data.success && healthData.success) {
+      state.analyticsOverview = data;
+      state.nodeHealth = healthData;
+      renderAnalytics();
+    } else {
+      throw new Error(data.message || healthData.message || 'Không thể tải analytics');
+    }
+  } catch (err) {
+    console.error('Failed to fetch analytics:', err);
+    analyticsSummary.textContent = `Lỗi tải analytics: ${err.message}`;
+    analyticsCards.innerHTML = '<div class="loading">Không thể tải dữ liệu phân tích</div>';
+  }
+}
+
+function fillConfigForm(nodeId) {
+  const node = state.nodes.get(nodeId);
+  const config = state.nodeConfigs.get(nodeId) || state.nodeConfigs.get(node?.uid) || state.nodeConfigs.get(node?.id);
+  const lora = config ? config.lora || {} : {};
+
+  configNodeId.value = config ? config.nodeId : (node ? node.id : nodeId);
+  configAddress.value = lora.address !== undefined ? lora.address : '';
 }
 
 // Render daily statistics
@@ -523,6 +1116,13 @@ function renderDailyStats() {
 // Fetch filtered history data
 async function fetchFilteredHistory() {
   try {
+    if (!state.selectedNode) {
+      state.history = [];
+      drawChart();
+      addLog('info', 'Hãy chọn node trước khi lọc dữ liệu');
+      return;
+    }
+
     const params = new URLSearchParams();
 
     if (state.selectedNode) {
@@ -558,6 +1158,12 @@ async function fetchFilteredHistory() {
 // Fetch recent history (unfiltered)
 async function fetchRecentHistory() {
   try {
+    if (!state.selectedNode) {
+      state.history = [];
+      drawChart();
+      return;
+    }
+
     const params = new URLSearchParams();
 
     if (state.selectedNode) {
@@ -621,6 +1227,8 @@ clearFilterBtn.addEventListener('click', () => {
 setInterval(() => {
   fetchSystemStatus();
   fetchDailyStats();
+  fetchGatewaySync();
+  fetchAnalyticsOverview();
 }, 30000); // Update every 30 seconds
 
 // Check node status (online/offline) every 5 seconds
@@ -633,3 +1241,6 @@ setInterval(() => {
 // Initial load
 addLog('info', 'Dashboard khởi động');
 updateFilterStatus(); // Initialize filter status indicator
+fetchGatewaySync();
+fetchAnalyticsOverview();
+switchTab(localStorage.getItem('activeDashboardTab') || 'nodes');

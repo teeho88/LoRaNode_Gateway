@@ -1,412 +1,466 @@
-# LoRa Sensor Gateway System
+# LoRa Sensor Gateway
 
-Hệ thống giám sát cảm biến và điều khiển từ xa sử dụng giao thức LoRa, gồm node cảm biến (Arduino Nano) và gateway (Node.js server chạy trên Raspberry Pi 4).
+Hệ thống giám sát nhiệt độ, độ ẩm và điều khiển relay qua LoRa, gồm các node Arduino Nano dùng module **AS32-TTL-100 UART** và gateway Node.js chạy tốt trên Raspberry Pi 4 hoặc Windows khi thử nghiệm.
 
-## Tính năng
+Dashboard hiện tại dùng giao diện dạng tab, WebSocket thời gian thực, cấu hình node/gateway từ UI, cơ chế rollback an toàn khi đổi profile LoRa, phân tích xu hướng, dự báo và chấm điểm sức khỏe node.
 
-### Node Cảm biến (Arduino)
-- Đọc nhiệt độ và độ ẩm từ cảm biến DHT11
-- Gửi dữ liệu về gateway qua LoRa (SX1278)
-- Tự động bật/tắt relay quạt khi vượt ngưỡng
-- Nhận lệnh điều khiển relay từ gateway
-- Chế độ điều khiển: Auto/Manual
+## Tính Năng Chính
 
-### Gateway (Node.js trên Raspberry Pi 4)
-- Nhận dữ liệu từ các node qua serial port
-- Lưu trữ dữ liệu và lịch sử (tối ưu cho RPi)
-- **Web Dashboard** thời gian thực với WebSocket
-- REST API để truy vấn và điều khiển
-- Gửi lệnh điều khiển đến các node
-- Hỗ trợ nhiều node đồng thời (20-30 nodes trên RPi 2GB)
+- Giám sát nhiều node theo thời gian thực qua Socket.IO.
+- Mỗi node có UID lưu trong EEPROM để gateway phân biệt dù ID mặc định bị trùng sau lần nạp code đầu.
+- Điều khiển relay từ dashboard: bật, tắt, auto.
+- Đọc 2 cảm biến DHT11 trên mỗi node, tính trung bình để điều khiển relay.
+- Cấu hình ID node, địa chỉ module và profile LoRa ngay trên tab Cấu hình.
+- Profile mạng LoRa dùng chung: Gateway Address, Network ID, Channel, Baud code, Air rate, Power.
+- Quy trình cấu hình an toàn: stage -> xác nhận gateway sync -> activate -> commit hoặc rollback.
+- Node tự rollback về cấu hình cũ nếu activate LoRa nhưng không nhận commit trong 60 giây.
+- Tab Phân tích: dự báo nhiệt độ/độ ẩm, xu hướng tăng/giảm, phát hiện bất thường, health score và khuyến nghị kiểm tra.
+- Lưu thống kê ngày ra JSON để giảm ghi SD card trên Raspberry Pi.
 
-## Yêu cầu phần cứng
+## Cấu Trúc Dự Án
 
-### Node Cảm biến
-- Arduino Nano
-- Module LoRa SX1278 (433MHz)
-- Cảm biến DHT11
-- Module Relay 1 kênh
-- Nguồn 5V
+```text
+.
+|-- arduino/
+|   |-- lora_sensor_node_AS32/
+|   |   `-- lora_sensor_node_AS32.ino
+|-- public/
+|   |-- index.html
+|   |-- app.js
+|   `-- style.css
+|-- src/
+|   `-- server.js
+|-- data/
+|-- .env.example
+`-- package.json
+```
+
+README này là file tài liệu duy nhất của dự án, dùng cho phát triển, vận hành và cho agent đọc ngữ cảnh. Không tạo thêm file `.md` khác trong repo; mọi cập nhật tài liệu đều gộp vào đây.
+
+## Phần Cứng
+
+### Node Arduino
+
+- Arduino Nano.
+- Module LoRa AS32-TTL-100, giao tiếp UART.
+- 2 cảm biến DHT11.
+- Relay 1 kênh cho quạt hoặc thiết bị điều khiển.
+- Nguồn 5V đủ dòng cho Arduino, relay và module LoRa.
 
 ### Gateway
-- **Raspberry Pi 4** (khuyến nghị 2GB RAM trở lên)
-- Module LoRa SX1278 kết nối qua USB-Serial
-- Thẻ nhớ microSD 16GB+
-- Nguồn 5V/3A
-- (Tùy chọn) Arduino làm bridge giữa LoRa và Raspberry Pi
 
-## Kết nối phần cứng
+- Raspberry Pi 4 hoặc máy Windows để thử nghiệm.
+- Module AS32-TTL-100 nối trực tiếp UART/GPIO hoặc qua USB-Serial.
+- Nếu dùng Raspberry Pi GPIO UART, bật UART trên Raspberry Pi, nối TX/RX đúng chiều, dùng chung GND, rồi đặt `SERIAL_PORT=/dev/ttyAMA0` hoặc `/dev/serial0` trong `.env`.
 
-### Arduino Nano + LoRa SX1278
-```
-LoRa SX1278:
-  NSS   -> D10
-  MOSI  -> D11
-  MISO  -> D12
-  SCK   -> D13
-  RST   -> D9
-  DIO0  -> D2
+## Sơ Đồ Nối Dây
 
-DHT11:
-  DATA  -> D4
-  VCC   -> 5V
-  GND   -> GND
+### Arduino Nano + AS32-TTL-100
 
-Relay:
-  IN    -> D7
-  VCC   -> 5V
-  GND   -> GND
+```text
+AS32-TTL-100     Arduino Nano
+TX               D2  (SoftwareSerial RX)
+RX               D3  (SoftwareSerial TX)
+AUX              D5  (tùy chọn)
+VCC              5V
+GND              GND
 ```
 
-## Cài đặt
+Chế độ đơn giản, luôn chạy normal:
 
-### 1. Arduino (Node cảm biến)
-
-#### Cài đặt thư viện Arduino:
-- LoRa by Sandeep Mistry
-- DHT sensor library by Adafruit
-- ArduinoJson by Benoit Blanchon
-
-Từ Arduino IDE:
-1. Mở `Sketch > Include Library > Manage Libraries`
-2. Tìm và cài đặt các thư viện trên
-3. Mở file `arduino/lora_sensor_node.ino`
-4. Chỉnh sửa cấu hình (NODE_ID, ngưỡng, tần số LoRa)
-5. Upload lên Arduino Nano
-
-### 2. Gateway (Node.js trên Raspberry Pi)
-
-#### Test trên Windows trước (Khuyến nghị)
-
-**Nên test đầy đủ trên Windows trước khi deploy lên Raspberry Pi!**
-
-Xem hướng dẫn chi tiết: **[windows-setup.md](windows-setup.md)**
-
-Tóm tắt nhanh:
-```cmd
-# 1. Cài Node.js từ https://nodejs.org/
-# 2. Clone project và cài dependencies
-npm install
-
-# 3. Tạo file .env
-copy .env.example .env
-notepad .env
-# Sửa SERIAL_PORT=COM3 (thay bằng COM port thực tế)
-
-# 4. Upload Arduino code qua Arduino IDE
-# 5. Chạy server
-npm start
-
-# 6. Truy cập http://localhost:3000
+```text
+M0               GND
+M1               GND
 ```
 
-#### Cài đặt nhanh (Development/Testing trên Linux/RPi)
+Nếu muốn node tự đổi cấu hình LoRa từ lệnh gateway/UI:
+
+```text
+M0               D8
+M1               D9
+```
+
+Sau đó sửa trong `arduino/lora_sensor_node_AS32/lora_sensor_node_AS32.ino`:
+
+```cpp
+#define LORA_M0_PIN 8
+#define LORA_M1_PIN 9
+```
+
+### DHT11 và Relay
+
+```text
+DHT11 #1 DATA    D4
+DHT11 #2 DATA    D6
+Relay IN         D7
+VCC              5V
+GND              GND
+```
+
+### Raspberry Pi + AS32-TTL-100
+
+Kết nối UART cơ bản:
+
+```text
+AS32-TTL-100     Raspberry Pi
+TX               GPIO15 / RXD
+RX               GPIO14 / TXD
+VCC              5V hoặc nguồn riêng phù hợp module
+GND              GND chung
+```
+
+Khuyến nghị ổn định nhất:
+
+```text
+M0               GND
+M1               GND
+```
+
+Nếu gateway cần điều khiển mode bằng GPIO:
+
+```text
+M0               GPIO23
+M1               GPIO24
+AUX              GPIO18
+```
+
+Trong `.env`, bật:
+
+```env
+USE_GPIO_LORA_MODE=true
+SERIAL_PORT=/dev/ttyAMA0
+```
+
+## Cài Đặt Gateway
+
 ```bash
-# Cài đặt dependencies
 npm install
-
-# Sao chép file cấu hình
 cp .env.example .env
-
-# Chỉnh sửa .env để cấu hình cổng serial
-nano .env
-# Raspberry Pi: /dev/ttyUSB0 hoặc /dev/ttyAMA0
-# Windows (test): COM3, COM4
-
-# Cấp quyền serial port (Raspberry Pi/Linux)
-sudo usermod -a -G dialout $USER
-# Logout và login lại
-
-# Chạy server
 npm start
 ```
 
-#### Cài đặt Production trên Raspberry Pi 4
+Trên Windows, tạo `.env` và đặt đúng COM port:
 
-Xem hướng dẫn chi tiết: **[raspberry-pi-setup.md](raspberry-pi-setup.md)**
-
-Tóm tắt:
-```bash
-# 1. Cài đặt Node.js 18.x
-curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
-sudo apt install -y nodejs
-
-# 2. Clone và cài đặt
-git clone <repo-url> lora-gateway
-cd lora-gateway
-npm install
-
-# 3. Cấu hình
-cp .env.example .env
-nano .env
-
-# 4. Tạo systemd service (tự động chạy khi khởi động)
-sudo nano /etc/systemd/system/lora-gateway.service
-sudo systemctl enable lora-gateway
-sudo systemctl start lora-gateway
-
-# 5. Kiểm tra trạng thái
-sudo systemctl status lora-gateway
+```env
+PORT=3000
+SERIAL_PORT=COM3
+BAUD_RATE=9600
 ```
 
-## Sử dụng
+Trên Raspberry Pi:
 
-### Web Dashboard
-
-Sau khi khởi động gateway, truy cập dashboard qua trình duyệt:
-
-```
-http://<raspberry-pi-ip>:3000
-```
-
-**Tính năng Dashboard:**
-- 📊 Hiển thị real-time nhiệt độ, độ ẩm từ tất cả nodes
-- 🎛️ Điều khiển relay (BẬT/TẮT/AUTO) trực tiếp trên giao diện
-- 📈 Biểu đồ lịch sử nhiệt độ & độ ẩm
-- 📅 **Thống kê hàng ngày**: nhiệt độ/độ ẩm cao nhất, thấp nhất trong ngày
-- 🔍 **Lọc dữ liệu theo ngày và giờ**: chọn khoảng thời gian để xem dữ liệu
-- 🔔 Nhật ký hệ thống real-time
-- 📱 Responsive - hỗ trợ mobile
-
-**Demo:**
-![Dashboard Preview](docs/dashboard-preview.png)
-
-### API Endpoints
-
-#### Lấy dữ liệu tất cả các node
-```bash
-GET http://localhost:3000/api/nodes
+```env
+PORT=3000
+SERIAL_PORT=/dev/ttyAMA0
+BAUD_RATE=9600
+USE_GPIO_LORA_MODE=false
+MAX_HISTORY=500
 ```
 
-#### Lấy dữ liệu node cụ thể
-```bash
-GET http://localhost:3000/api/nodes/KHO_A
+Nếu port `3000` đang bận:
+
+```powershell
+netstat -ano -p tcp | findstr :3000
+Stop-Process -Id <PID> -Force
 ```
 
-#### Lấy lịch sử dữ liệu
-```bash
-# Lấy 100 bản ghi gần nhất
-GET http://localhost:3000/api/history?nodeId=KHO_A&limit=100
+Hoặc chạy cổng khác:
 
-# Lọc theo ngày
-GET http://localhost:3000/api/history?nodeId=KHO_A&date=2025-12-09
-
-# Lọc theo ngày và khoảng thời gian
-GET http://localhost:3000/api/history?nodeId=KHO_A&date=2025-12-09&startTime=08:00:00&endTime=18:00:00
+```powershell
+$env:PORT='3001'
+npm start
 ```
 
-#### Lấy thống kê hàng ngày
-```bash
-# Thống kê hôm nay của tất cả nodes
-GET http://localhost:3000/api/daily-stats
+## Cấu Hình `.env`
 
-# Tất cả thống kê của một node
-GET http://localhost:3000/api/daily-stats/KHO_A
+```env
+PORT=3000
+SERIAL_PORT=/dev/ttyAMA0
+BAUD_RATE=9600
+USE_GPIO_LORA_MODE=false
+MAX_HISTORY=500
+BACKUP_INTERVAL=3600000
 
-# Thống kê ngày cụ thể
-GET http://localhost:3000/api/daily-stats/KHO_A?date=2025-12-09
+ANALYTICS_WINDOW_MINUTES=120
+ANALYTICS_FORECAST_MINUTES=30
+ANALYTICS_TEMP_HIGH=32
+ANALYTICS_HUM_HIGH=75
+ANALYTICS_ANOMALY_ZSCORE=2.5
+NODE_OFFLINE_SECONDS=150
 ```
 
-Dữ liệu trả về bao gồm:
-- `tempMax`, `tempMin`: Nhiệt độ cao nhất/thấp nhất (°C)
-- `humMax`, `humMin`: Độ ẩm cao nhất/thấp nhất (%)
-- `tempMaxTime`, `tempMinTime`: Thời gian ghi nhận nhiệt độ max/min
-- `humMaxTime`, `humMinTime`: Thời gian ghi nhận độ ẩm max/min
-- `count`: Tổng số lần đo trong ngày
+## Upload Firmware Node
 
-#### Điều khiển relay
-```bash
-POST http://localhost:3000/api/control/relay
-Content-Type: application/json
+1. Mở `arduino/lora_sensor_node_AS32/lora_sensor_node_AS32.ino`.
+2. Chọn board Arduino Nano.
+3. Cài thư viện Arduino:
+   - DHT sensor library by Adafruit.
+   - ArduinoJson by Benoit Blanchon.
+   - SoftwareSerial có sẵn trong Arduino.
+4. Upload firmware.
+5. Mở Serial Monitor 9600 baud để kiểm tra Node ID và Node UID.
 
-{
-  "target": "KHO_A",
-  "relay": true
-}
-```
+Firmware gửi dữ liệu theo dạng JSON được bọc bởi marker `<...>`:
 
-#### Chuyển về chế độ tự động
-```bash
-POST http://localhost:3000/api/control/relay
-Content-Type: application/json
-
-{
-  "target": "KHO_A",
-  "auto": true
-}
-```
-
-#### Kiểm tra trạng thái hệ thống
-```bash
-GET http://localhost:3000/api/status
-```
-
-### Ví dụ curl
-
-```bash
-# Bật relay của node KHO_A
-curl -X POST http://localhost:3000/api/control/relay \
-  -H "Content-Type: application/json" \
-  -d '{"target": "KHO_A", "relay": true}'
-
-# Tắt relay
-curl -X POST http://localhost:3000/api/control/relay \
-  -H "Content-Type: application/json" \
-  -d '{"target": "KHO_A", "relay": false}'
-
-# Chuyển về chế độ tự động
-curl -X POST http://localhost:3000/api/control/relay \
-  -H "Content-Type: application/json" \
-  -d '{"target": "KHO_A", "auto": true}'
-
-# Điều khiển tất cả các node
-curl -X POST http://localhost:3000/api/control/relay \
-  -H "Content-Type: application/json" \
-  -d '{"target": "ALL", "relay": true}'
-```
-
-## Cấu trúc dữ liệu
-
-### Dữ liệu từ Node đến Gateway
 ```json
 {
-  "id": "KHO_A",
-  "temp": 32.5,
-  "hum": 70.0,
-  "relay": true,
+  "id": "KHO_B",
+  "uid": "A1B2C3D4",
+  "temp1": 30.2,
+  "hum1": 72.5,
+  "temp2": 29.8,
+  "hum2": 70.1,
+  "temp": 30.0,
+  "hum": 71.3,
+  "relay": false,
   "manual": false
 }
 ```
 
-### Lệnh từ Gateway đến Node
-```json
-{
-  "target": "KHO_A",
-  "relay": true,
-  "auto": false
-}
+`temp`/`hum` là trung bình của 2 cảm biến, dùng để điều khiển relay và hiển thị chính trên dashboard. Bản tin xác nhận lệnh (ACK) có thêm `"ack": true` và không chứa dữ liệu cảm biến.
+
+## Cấu Hình Module AS32-TTL-100 Bằng AT Commands
+
+Chỉ cần khi cấu hình thủ công qua Serial Monitor (không qua UI gateway).
+
+1. Nối M0 và M1 về VCC (5V) để vào chế độ Cấu hình (Sleep/Config Mode).
+2. Mở Serial Monitor ở baud 9600.
+3. Gửi các lệnh AT:
+
+```text
+AT+ADDRESS=0001      // Địa chỉ module (0x0001)
+AT+NETWORKID=00      // Network ID (0x00)
+AT+PARAMETER=9,5,0   // Baud 9600, Air Rate 2.4k, Power 20dBm
+AT+CHANNEL=23        // Kênh 23 = 433MHz
+AT+SAVE              // Lưu cấu hình
 ```
 
-### Acknowledgment từ Node
-```json
+4. Nối lại M0 và M1 về GND để trở về Normal Mode.
+
+Bảng chế độ hoạt động (M0, M1):
+
+| M0 | M1 | Chế độ | Mô tả |
+|----|----|--------|-------|
+| 0  | 0  | Normal Mode | Truyền/nhận dữ liệu bình thường |
+| 0  | 1  | Wake-up Mode | Tiết kiệm pin |
+| 1  | 0  | Power Saving | Tiết kiệm pin sâu |
+| 1  | 1  | Sleep/Config Mode | Cấu hình module bằng AT commands |
+
+Ý nghĩa `AT+PARAMETER=baud,airrate,power`:
+
+- Baud: `0`=1200bps, `9`=9600bps, `19`=19200bps (khuyên dùng `9`).
+- Air Rate: `0`=0.3kbps (xa nhất), `5`=2.4kbps (cân bằng, khuyên dùng), `10`=19.2kbps (nhanh, gần).
+- Power: `0`=20dBm/100mW (max, khuyên dùng cho tầm xa), `1`=17dBm, `2`=14dBm, `3`=10dBm (min).
+
+`AT+CHANNEL`: kênh 0-80, công thức `Frequency = 410.125 + CH x 0.5 MHz`. Channel 23 = 433MHz, khuyên dùng ở Việt Nam.
+
+Thông số phần cứng module: tần số 410-525MHz, công suất tối đa 100mW (20dBm), dòng tiêu thụ ~120mA khi phát và ~15mA khi nhận, điện áp 5V (hoặc 3.3V tùy phiên bản).
+
+### Xử Lý Lỗi Thường Gặp
+
+- Không nhận được dữ liệu: kiểm tra TX/RX có bị nối ngược không, M0/M1 phải ở GND (Normal mode), Channel và NetworkID phải giống nhau giữa gateway và node.
+- Module không phản hồi AT commands: M0/M1 phải ở VCC (Config mode), kiểm tra baud rate 9600, thử ngắt nguồn cấp lại module.
+- Tầm xa không đủ: tăng power (`AT+PARAMETER=9,5,0`), giảm air rate (`AT+PARAMETER=9,0,0`), kiểm tra anten 433MHz và vị trí đặt module tránh vật cản kim loại.
+
+## Dashboard
+
+Mở trình duyệt:
+
+```text
+http://localhost:3000
+```
+
+Các tab hiện có:
+
+- Giám sát: xem node online/offline, nhiệt độ, độ ẩm, relay, UID và điều khiển relay.
+- Cấu hình: đổi ID node, địa chỉ module, profile LoRa dùng chung, xác nhận gateway sync, activate, commit, rollback.
+- Thống kê: max/min nhiệt độ và độ ẩm trong ngày.
+- Phân tích: forecast, xu hướng, anomaly, health score, nhịp gói tin, khuyến nghị kiểm tra.
+- Biểu đồ: xem lịch sử theo node, ngày và khoảng giờ.
+- Nhật ký: log sự kiện gateway và lệnh điều khiển.
+
+## Quy Trình Đổi Cấu Hình LoRa An Toàn
+
+Các thông số mạng như Network ID, Channel, Baud code, Air rate và Power phải đồng nhất giữa gateway và tất cả node cần liên lạc.
+
+Quy trình khuyến nghị:
+
+1. Vào tab Cấu hình, chọn node.
+2. Nhập ID mới hoặc Node Address nếu cần.
+3. Nhập profile mạng LoRa dùng chung.
+4. Bấm Gửi cấu hình để stage cấu hình trên node.
+5. Cấu hình module LoRa phía gateway sang đúng profile mới.
+6. Bấm Tôi đã cấu hình gateway để xác nhận gateway sync.
+7. Bấm Kích hoạt LoRa.
+8. Nếu node vẫn xuất hiện và ACK ổn, bấm Commit.
+9. Nếu có lỗi, bấm Rollback hoặc chờ node tự rollback sau 60 giây.
+
+Gateway cũng chặn activate nếu profile gateway chưa được xác nhận sync, giúp giảm nguy cơ node đổi sóng trước rồi mất liên lạc.
+
+## API
+
+### Node và lịch sử
+
+```http
+GET /api/nodes
+GET /api/nodes/:id
+GET /api/history?nodeId=<id|uid|nodeKey>&limit=100
+GET /api/history?nodeId=<id|uid|nodeKey>&date=2026-06-02&startTime=08:00:00&endTime=18:00:00
+```
+
+### Điều khiển relay
+
+```http
+POST /api/control/relay
+Content-Type: application/json
+
 {
-  "id": "KHO_A",
-  "ack": true,
+  "target": "KHO_B",
+  "targetUid": "A1B2C3D4",
   "relay": true
 }
 ```
 
-## Cấu hình
+Chuyển về auto:
 
-### Ngưỡng cảm biến (trong Arduino code)
-```cpp
-#define TEMP_HIGH_THRESHOLD 32.0   // Nhiệt độ cao (°C)
-#define TEMP_LOW_THRESHOLD 15.0    // Nhiệt độ thấp (°C)
-#define HUM_HIGH_THRESHOLD 75.0    // Độ ẩm cao (%)
-#define HUM_LOW_THRESHOLD 30.0     // Độ ẩm thấp (%)
+```json
+{
+  "target": "KHO_B",
+  "targetUid": "A1B2C3D4",
+  "auto": true
+}
 ```
 
-### Tần số LoRa
-```cpp
-#define LORA_FREQUENCY 433E6  // 433MHz
-// Các tần số khác: 868E6 (868MHz), 915E6 (915MHz)
+### Cấu hình gateway và node
+
+```http
+GET  /api/config/network
+POST /api/config/network
+GET  /api/config/gateway/sync
+POST /api/config/gateway/confirm
+GET  /api/config/nodes
+POST /api/config/node
+POST /api/config/node/activate
+POST /api/config/node/commit
+POST /api/config/node/rollback
 ```
 
-### Khoảng thời gian gửi dữ liệu
-```cpp
-#define SEND_INTERVAL 5000   // 5 giây
-#define READ_INTERVAL 2000   // 2 giây
+Ví dụ cấu hình node:
+
+```json
+{
+  "target": "KHO_B",
+  "targetUid": "A1B2C3D4",
+  "nodeId": "KHO_A",
+  "address": 1
+}
 ```
 
-### Lưu trữ dữ liệu
+### Phân tích và sức khỏe node
 
-Hệ thống sử dụng **hybrid storage** kết hợp in-memory và SD card:
+```http
+GET /api/analytics/overview?windowMinutes=120&forecastMinutes=30
+GET /api/analytics/alerts?windowMinutes=120&forecastMinutes=30
+GET /api/analytics/health?windowMinutes=120&forecastMinutes=30
+```
 
-- **In-memory**: Dữ liệu real-time (sensorData, dataHistory) cho hiệu suất cao
-- **SD card**: Thống kê hàng ngày (dailyStats) cho độ bền
-- **Backup tự động**: Mỗi giờ (cấu hình được) + khi tắt server
-- **Lưu trữ**: 30 ngày dữ liệu thống kê (tự động xóa dữ liệu cũ)
+`/api/analytics/health` trả về:
 
-File dữ liệu: `data/daily-stats.json`
+- `healthScore`: điểm sức khỏe 0-100.
+- `healthLevel`: `good`, `warning`, `critical`.
+- `online`: node còn gửi dữ liệu trong ngưỡng `NODE_OFFLINE_SECONDS`.
+- `expectedInterval`: nhịp gói tin gần đây.
+- `recommendations`: khuyến nghị kiểm tra nguồn, anten, cảm biến hoặc chế độ relay.
 
-Khi khởi động lại server, dữ liệu thống kê được khôi phục tự động.
+### Thống kê và trạng thái
 
-**Cấu hình backup** (trong file `.env`):
+```http
+GET /api/daily-stats
+GET /api/daily-stats/:nodeId
+GET /api/status
+GET /health
+```
+
+## WebSocket Events
+
+Client gửi:
+
+```javascript
+socket.emit('controlRelay', { target: 'KHO_B', targetUid: 'A1B2C3D4', relay: true });
+socket.emit('configureNode', { target: 'KHO_B', targetUid: 'A1B2C3D4', nodeId: 'KHO_A', address: 1 });
+socket.emit('saveLoraNetwork', { networkId: 0, channel: 23, baudCode: 9, airRate: 5, power: 0 });
+socket.emit('activateNodeConfig', { target: 'KHO_A', targetUid: 'A1B2C3D4' });
+socket.emit('commitNodeConfig', { target: 'KHO_A', targetUid: 'A1B2C3D4' });
+socket.emit('rollbackNodeConfig', { target: 'KHO_A', targetUid: 'A1B2C3D4' });
+```
+
+Server gửi:
+
+```javascript
+socket.on('initialData', handler);
+socket.on('sensorData', handler);
+socket.on('commandAck', handler);
+socket.on('commandSent', handler);
+socket.on('commandError', handler);
+socket.on('configAck', handler);
+socket.on('configSent', handler);
+socket.on('configError', handler);
+socket.on('configActionSent', handler);
+socket.on('loraNetworkUpdated', handler);
+socket.on('gatewaySyncUpdated', handler);
+```
+
+## Dữ Liệu Lưu Trữ
+
+Trong thư mục `data/`:
+
+- `daily-stats.json`: thống kê ngày.
+- `node-configs.json`: cấu hình node đã stage/lưu.
+- `lora-network.json`: profile LoRa dùng chung.
+- `gateway-lora-sync.json`: trạng thái gateway đã đồng bộ profile hay chưa.
+
+Dữ liệu lịch sử gần được giữ trong RAM theo `MAX_HISTORY` để giảm ghi thẻ SD.
+
+## Ghi Chú Kỹ Thuật Server
+
+- Gateway ghép dữ liệu UART thành JSON hoàn chỉnh bằng buffer thủ công (`serialBuffer`) dựa trên marker `<` và `>`; nếu sửa firmware, phải giữ nguyên cách đóng gói này. Có fallback parse JSON thô cho dữ liệu không có marker.
+- Nếu không mở được cổng serial (không có module LoRa thật hoặc sai `SERIAL_PORT`), server vẫn chạy ở chế độ demo (không crash, không có dữ liệu thật) thay vì thoát tiến trình.
+- Module `onoff` (điều khiển GPIO) tự động bị vô hiệu hóa khi chạy ngoài Linux/Raspberry Pi (ví dụ Windows/Mac khi phát triển).
+- `daily-stats.json` được ghi mỗi `BACKUP_INTERVAL` và khi tắt server; bản ghi cũ hơn 30 ngày bị dọn tự động để bảo vệ thẻ SD.
+
+## Lưu Ý Vận Hành
+
+- Network ID, Channel, Baud code, Air rate và Power phải giống nhau giữa gateway và node.
+- Address nên khác nhau cho từng module; gateway thường dùng `0`, node dùng `1`, `2`, ...
+- Khi nhiều node mới nạp firmware có cùng ID mặc định, dashboard vẫn hiển thị nhờ UID. Sau đó đổi ID từng node trong tab Cấu hình.
+- Nếu dùng M0/M1 nối GND cố định, module luôn normal mode và không thể tự đổi AT config bằng firmware.
+- Với Raspberry Pi, cần bật UART và cấp quyền serial cho user chạy service.
+- Nếu deploy production, nên chạy qua systemd và thêm xác thực nếu dashboard mở ra mạng rộng.
+
+## Kiểm Tra Nhanh
+
 ```bash
-BACKUP_INTERVAL=3600000  # 1 giờ (3600000ms)
+npm start
 ```
 
-## Hiệu suất
+Sau đó thử:
 
-### Raspberry Pi 4 (2GB RAM)
-- Xử lý đồng thời: **20-30 sensor nodes**
-- Thời gian phản hồi: < 100ms
-- RAM sử dụng: ~150-200MB
-- CPU idle: ~5-10%
-
-### Raspberry Pi 4 (4GB RAM)
-- Xử lý đồng thời: **50+ sensor nodes**
-- MAX_HISTORY có thể tăng lên 1000
-
-## Khắc phục sự cố
-
-### Node không gửi dữ liệu
-- Kiểm tra kết nối LoRa module
-- Kiểm tra tần số LoRa (433/868/915 MHz)
-- Kiểm tra Serial Monitor của Arduino
-
-### Gateway không nhận dữ liệu
-- Kiểm tra cổng serial trong file `.env`
-- Raspberry Pi: `ls -la /dev/ttyUSB* /dev/ttyAMA*`
-- Windows: Device Manager > Ports (COM & LPT)
-- Kiểm tra quyền truy cập serial port (Linux/RPi):
-  ```bash
-  sudo usermod -a -G dialout $USER
-  # Logout và login lại
-  ```
-
-### Gateway không khởi động trên Raspberry Pi
 ```bash
-# Kiểm tra logs
-journalctl -u lora-gateway -n 50
-
-# Kiểm tra port đã được sử dụng chưa
-netstat -tlnp | grep 3000
-
-# Test serial port
-sudo apt install -y minicom
-minicom -D /dev/ttyUSB0 -b 9600
+curl http://localhost:3000/health
+curl http://localhost:3000/api/status
+curl http://localhost:3000/api/analytics/health
 ```
 
-### Dashboard không hiển thị dữ liệu
-- Kiểm tra console của trình duyệt (F12)
-- Kiểm tra WebSocket connection
-- Xóa cache trình duyệt
-- Kiểm tra firewall: `sudo ufw status`
+### Kiểm Tra UI Tự Động
 
-### RAM đầy trên Raspberry Pi
+`scripts/check-ui.js` dùng Playwright để tự khởi động gateway (chế độ demo, không cần phần cứng LoRa), mở dashboard bằng Chromium thật và kiểm tra: trang tải đúng, đủ 6 tab và chuyển tab đúng panel, Socket.IO kết nối thành công, `#nodes-container` thoát trạng thái loading, `/health` trả 200, và không có lỗi console JS.
+
 ```bash
-# Kiểm tra RAM
-free -h
-
-# Giảm MAX_HISTORY trong .env
-nano .env
-# Đổi MAX_HISTORY=500 -> MAX_HISTORY=200
-
-# Restart service
-sudo systemctl restart lora-gateway
+npx playwright install chromium   # chỉ cần chạy 1 lần
+npm run check:ui
 ```
 
-### Cảm biến DHT11 lỗi
-- Kiểm tra kết nối 3 chân (VCC, GND, DATA)
-- Thêm điện trở kéo lên 10kΩ giữa DATA và VCC nếu cần
-
-## Tài liệu bổ sung
-
-- **[windows-setup.md](windows-setup.md)** - 🪟 Hướng dẫn cài đặt và test trên Windows (khuyến nghị đọc trước)
-- **[raspberry-pi-setup.md](raspberry-pi-setup.md)** - 🍓 Hướng dẫn chi tiết cài đặt trên Raspberry Pi (production)
-- **[arduino/README.md](arduino/README.md)** - 🔌 Hướng dẫn Arduino chi tiết
-- **[test-api.http](test-api.http)** - 🧪 Test API với REST Client
+Script tự chọn cổng `3999` (đổi bằng biến môi trường `CHECK_UI_PORT`), tự tắt server sau khi kiểm tra xong, và trả exit code khác 0 nếu có kiểm tra thất bại.
 
 ## License
 

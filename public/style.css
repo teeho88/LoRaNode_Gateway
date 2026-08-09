@@ -23,7 +23,7 @@ header {
   padding: 20px 30px;
   border-radius: 10px;
   box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-  margin-bottom: 20px;
+  margin-bottom: 14px;
 }
 
 h1 {
@@ -61,9 +61,7 @@ h2 {
 }
 
 main {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
+  display: block;
 }
 
 section {
@@ -73,10 +71,86 @@ section {
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
+.tab-nav {
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  border-radius: 14px;
+  box-shadow: 0 8px 24px rgba(49, 55, 105, 0.16);
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  margin-bottom: 20px;
+  padding: 8px;
+  position: sticky;
+  top: 10px;
+  z-index: 10;
+}
+
+.tab-button {
+  background: transparent;
+  border: none;
+  border-radius: 10px;
+  color: #555;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 700;
+  padding: 12px 14px;
+  transition: background 0.2s, color 0.2s, transform 0.2s, box-shadow 0.2s;
+}
+
+.tab-button:hover {
+  background: rgba(102, 126, 234, 0.12);
+  color: #4f60ce;
+}
+
+.tab-button.active {
+  background: linear-gradient(135deg, #667eea, #17a2b8);
+  box-shadow: 0 8px 18px rgba(102, 126, 234, 0.32);
+  color: white;
+  transform: translateY(-1px);
+}
+
+.tab-panel {
+  animation: panelFade 0.18s ease-out;
+  display: none;
+}
+
+.tab-panel.active {
+  display: block;
+}
+
+@keyframes panelFade {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .nodes-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
   gap: 20px;
+}
+
+.duplicate-id-warning {
+  display: none;
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border-left: 4px solid #f0ad4e;
+  border-radius: 8px;
+  background: #fff9ec;
+  color: #7a5900;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.duplicate-id-warning.active {
+  display: block;
 }
 
 .node-card {
@@ -108,6 +182,16 @@ section {
   font-size: 20px;
   font-weight: bold;
   color: #667eea;
+}
+
+.node-uid {
+  background: rgba(102, 126, 234, 0.12);
+  border-radius: 10px;
+  color: #667eea;
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 8px;
 }
 
 .node-status {
@@ -301,6 +385,238 @@ section {
   margin-bottom: 20px;
 }
 
+.config-note {
+  color: #666;
+  font-size: 14px;
+  margin-bottom: 15px;
+}
+
+.config-form {
+  background: linear-gradient(135deg, rgba(102, 126, 234, 0.08), rgba(23, 162, 184, 0.08));
+  border: 1px solid rgba(102, 126, 234, 0.18);
+  border-radius: 10px;
+  padding: 16px;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 14px;
+}
+
+.form-grid label {
+  color: #555;
+  display: flex;
+  flex-direction: column;
+  font-size: 13px;
+  font-weight: 600;
+  gap: 6px;
+}
+
+.form-grid input,
+.form-grid select {
+  border: 2px solid #dfe3f2;
+  border-radius: 6px;
+  font-size: 14px;
+  padding: 9px 12px;
+}
+
+.form-grid input:focus,
+.form-grid select:focus {
+  border-color: #667eea;
+  outline: none;
+}
+
+.config-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 15px;
+}
+
+.btn-config {
+  background: #667eea;
+  border: none;
+  border-radius: 6px;
+  color: white;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 700;
+  padding: 10px 18px;
+  transition: all 0.2s;
+}
+
+.btn-config:hover {
+  background: #5568d3;
+  transform: translateY(-1px);
+}
+
+.btn-config.btn-warn {
+  background: #f0ad4e;
+}
+
+.btn-config.btn-warn:hover {
+  background: #df9b3c;
+}
+
+.btn-config.btn-safe {
+  background: #28a745;
+}
+
+.btn-config.btn-safe:hover {
+  background: #218838;
+}
+
+.btn-config.btn-danger {
+  background: #dc3545;
+}
+
+.btn-config.btn-danger:hover {
+  background: #c82333;
+}
+
+.btn-config.btn-info {
+  background: #17a2b8;
+}
+
+.btn-config.btn-info:hover {
+  background: #138496;
+}
+
+#config-status {
+  color: #666;
+  font-size: 13px;
+}
+
+.gateway-sync-box {
+  align-items: center;
+  background: #f8fbff;
+  border: 1px solid #d9e8ff;
+  border-radius: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: space-between;
+  margin-bottom: 14px;
+  padding: 12px 14px;
+}
+
+#gateway-sync-status {
+  margin-left: 6px;
+}
+
+#gateway-sync-status.synced {
+  color: #218838;
+  font-weight: 700;
+}
+
+#gateway-sync-status.pending {
+  color: #e67e22;
+  font-weight: 700;
+}
+
+#gateway-sync-status.error {
+  color: #c82333;
+  font-weight: 700;
+}
+
+.analytics-controls {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.analytics-summary {
+  background: linear-gradient(135deg, rgba(23, 162, 184, 0.08), rgba(102, 126, 234, 0.08));
+  border: 1px solid rgba(23, 162, 184, 0.25);
+  border-radius: 10px;
+  color: #334;
+  font-size: 14px;
+  margin-bottom: 14px;
+  padding: 10px 12px;
+}
+
+.analytics-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+}
+
+.analytics-card {
+  background: #fff;
+  border: 1px solid #e5e9f5;
+  border-left: 5px solid #9aa8cc;
+  border-radius: 10px;
+  padding: 14px;
+}
+
+.analytics-card.risk-high {
+  border-left-color: #dc3545;
+}
+
+.analytics-card.risk-medium {
+  border-left-color: #f0ad4e;
+}
+
+.analytics-card.risk-low {
+  border-left-color: #28a745;
+}
+
+.analytics-card.health-critical {
+  background: #fff5f5;
+}
+
+.analytics-card.health-warning {
+  background: #fffaf0;
+}
+
+.analytics-card.health-good {
+  background: #f8fff9;
+}
+
+.analytics-node {
+  color: #445;
+  font-size: 17px;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.analytics-row {
+  color: #444;
+  display: flex;
+  font-size: 13px;
+  justify-content: space-between;
+  margin-top: 6px;
+}
+
+.analytics-trend-up {
+  color: #c82333;
+  font-weight: 700;
+}
+
+.analytics-trend-down {
+  color: #007bff;
+  font-weight: 700;
+}
+
+.analytics-trend-stable {
+  color: #6c757d;
+  font-weight: 700;
+}
+
+.analytics-recommendation {
+  background: rgba(0, 0, 0, 0.04);
+  border-radius: 6px;
+  color: #555;
+  font-size: 12px;
+  line-height: 1.35;
+  margin-top: 10px;
+  padding: 8px 10px;
+}
+
 .stat-card {
   background: white;
   border-radius: 8px;
@@ -482,5 +798,14 @@ section {
     flex-direction: column;
     align-items: flex-start;
     gap: 5px;
+  }
+
+  .tab-nav {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    position: static;
+  }
+
+  .tab-button {
+    padding: 10px;
   }
 }

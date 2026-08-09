@@ -13,7 +13,6 @@ npm-debug.log*
 # OS
 .DS_Store
 Thumbs.db
-.claude
 data/
 
 # IDE
@@ -21,3 +20,9 @@ data/
 .idea/
 *.swp
 *.swo
+
+# Agents
+.agent-memory
+.claude
+AGENTS.md
+CLAUDE.md
