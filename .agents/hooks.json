@@ -1,0 +1,20 @@
+{
+  "agent-bridge": {
+    "enabled": true,
+    "version": "2026-08-09.agy-lifecycle.v1",
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"D:\\TAILIEU\\MyProject\\Project sang kien 2025\\HTGSNDDA\\.agents\\agent-bridge-antigravity-hook.ps1\" PreInvocation",
+        "timeout": 20
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"D:\\TAILIEU\\MyProject\\Project sang kien 2025\\HTGSNDDA\\.agents\\agent-bridge-antigravity-hook.ps1\" Stop",
+        "timeout": 20
+      }
+    ]
+  }
+}

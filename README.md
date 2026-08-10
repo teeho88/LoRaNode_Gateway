@@ -157,6 +157,71 @@ USE_GPIO_LORA_MODE=false
 MAX_HISTORY=500
 ```
 
+### Tự Khởi Động Server Khi Raspberry Pi Bật Nguồn
+
+Dùng `systemd` để gateway tự chạy sau mỗi lần khởi động và tự chạy lại nếu tiến trình gặp lỗi. Trước tiên, tại thư mục dự án, kiểm tra đường dẫn thực tế:
+
+```bash
+pwd
+which node
+```
+
+Ví dụ dưới đây giả sử user chạy server là `pi`, dự án nằm tại `/home/pi/HTGSNDDA` và Node.js nằm tại `/usr/bin/node`. Nếu kết quả hai lệnh trên khác, thay các đường dẫn tương ứng trong file service.
+
+```bash
+sudo nano /etc/systemd/system/lora-gateway.service
+```
+
+Dán nội dung sau:
+
+```ini
+[Unit]
+Description=LoRa Sensor Gateway
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/HTGSNDDA
+EnvironmentFile=/home/pi/HTGSNDDA/.env
+ExecStart=/usr/bin/node /home/pi/HTGSNDDA/src/server.js
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Lưu file, sau đó nạp cấu hình và bật service ngay lập tức:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now lora-gateway.service
+```
+
+Kiểm tra trạng thái và xem log:
+
+```bash
+sudo systemctl status lora-gateway.service
+journalctl -u lora-gateway.service -f
+```
+
+#### Khi Cập Nhật Code Server
+
+Sau khi cập nhật `src/server.js` hoặc `.env`, phải khởi động lại service để Node.js nạp nội dung mới. Nếu `package.json` hoặc dependency thay đổi, chạy `npm install` trước khi restart:
+
+```bash
+cd /home/pi/HTGSNDDA
+git pull
+npm install
+sudo systemctl restart lora-gateway.service
+sudo systemctl status lora-gateway.service
+```
+
+Nếu chỉ sửa file giao diện trong `public/`, thông thường không cần restart server; tải lại trình duyệt bằng `Ctrl+F5` để tránh cache. Chỉ chạy `sudo systemctl daemon-reload` khi file `/etc/systemd/system/lora-gateway.service` thay đổi, sau đó restart service.
+
+User trong dòng `User=` phải có quyền truy cập cổng serial. Script `install-rpi-dependencies.sh` đã thêm user hiện tại vào nhóm `dialout` và `gpio`; cần đăng xuất/đăng nhập lại hoặc reboot một lần để quyền nhóm có hiệu lực.
+
 Nếu port `3000` đang bận:
 
 ```powershell

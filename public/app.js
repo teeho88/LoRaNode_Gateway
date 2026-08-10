@@ -268,6 +268,12 @@ socket.on('initialData', (data) => {
   if (data.gatewaySync) {
     updateGatewaySyncStatus(data.gatewaySync);
   }
+  if (Array.isArray(data.debugLogs)) {
+    data.debugLogs.forEach(pushLogEntry);
+  }
+  if (typeof data.captureRawSerial === 'boolean') {
+    logRawSerial.checked = data.captureRawSerial;
+  }
   state.isFiltered = false; // Ensure chart is in real-time mode on connect
   renderNodes();
   updateNodeSelect();
@@ -891,24 +897,192 @@ function drawChart() {
   chartCtx.fillText('Độ ẩm (%)', width - 125, 48);
 }
 
-// Add log entry
-function addLog(type, message) {
-  const log = document.createElement('div');
-  log.className = `log-entry ${type}`;
+// ---------------------------------------------------------------------------
+// Debug log console
+// ---------------------------------------------------------------------------
+const LOG_BUFFER_LIMIT = 1000;
+const LOG_LEVEL_RANK = { debug: 0, info: 1, success: 1, warning: 2, error: 3 };
 
-  const timestamp = new Date().toLocaleTimeString('vi-VN');
-  log.innerHTML = `
-    <span class="log-timestamp">[${timestamp}]</span>
-    <span class="log-message">${message}</span>
+const logState = {
+  entries: [],
+  sources: new Set(),
+  paused: false,
+  pendingWhilePaused: 0
+};
+
+const logLevelFilter = document.getElementById('log-level-filter');
+const logSourceFilter = document.getElementById('log-source-filter');
+const logSearch = document.getElementById('log-search');
+const logRawSerial = document.getElementById('log-raw-serial');
+const logAutoscroll = document.getElementById('log-autoscroll');
+const logPauseBtn = document.getElementById('log-pause');
+const logClearBtn = document.getElementById('log-clear');
+const logDownloadBtn = document.getElementById('log-download');
+const logCount = document.getElementById('log-count');
+const logStateLabel = document.getElementById('log-state');
+
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+// Client-side origin log (kept for existing callers)
+function addLog(type, message) {
+  pushLogEntry({
+    ts: new Date().toISOString(),
+    level: type,
+    source: 'ui',
+    message
+  });
+}
+
+function pushLogEntry(entry) {
+  logState.entries.push(entry);
+  if (logState.entries.length > LOG_BUFFER_LIMIT) {
+    logState.entries.shift();
+  }
+
+  if (!logState.sources.has(entry.source)) {
+    logState.sources.add(entry.source);
+    const option = document.createElement('option');
+    option.value = entry.source;
+    option.textContent = entry.source;
+    logSourceFilter.appendChild(option);
+  }
+
+  if (logState.paused) {
+    logState.pendingWhilePaused++;
+    updateLogStatus();
+    return;
+  }
+
+  if (matchesLogFilter(entry)) {
+    appendLogRow(entry);
+    trimLogRows();
+    if (logAutoscroll.checked) {
+      logsContainer.scrollTop = logsContainer.scrollHeight;
+    }
+  }
+  updateLogStatus();
+}
+
+function matchesLogFilter(entry) {
+  const levelChoice = logLevelFilter.value;
+  if (levelChoice !== 'all') {
+    const entryRank = LOG_LEVEL_RANK[entry.level] ?? 1;
+    if (levelChoice === 'error') {
+      if (entry.level !== 'error') return false;
+    } else if (entryRank < LOG_LEVEL_RANK[levelChoice]) {
+      return false;
+    }
+  }
+
+  const sourceChoice = logSourceFilter.value;
+  if (sourceChoice !== 'all' && entry.source !== sourceChoice) return false;
+
+  const term = logSearch.value.trim().toLowerCase();
+  if (term && !entry.message.toLowerCase().includes(term)) return false;
+
+  return true;
+}
+
+function appendLogRow(entry) {
+  const row = document.createElement('div');
+  row.className = `log-entry ${entry.level}`;
+
+  const time = new Date(entry.ts).toLocaleTimeString('vi-VN');
+  row.innerHTML = `
+    <span class="log-timestamp">[${time}]</span>
+    <span class="log-source">${escapeHtml(entry.source)}</span>
+    <span class="log-message">${escapeHtml(entry.message)}</span>
   `;
 
-  logsContainer.insertBefore(log, logsContainer.firstChild);
+  logsContainer.appendChild(row);
+}
 
-  // Keep only last 50 logs
-  while (logsContainer.children.length > 50) {
-    logsContainer.removeChild(logsContainer.lastChild);
+function trimLogRows() {
+  while (logsContainer.children.length > LOG_BUFFER_LIMIT) {
+    logsContainer.removeChild(logsContainer.firstChild);
   }
 }
+
+function renderLogs() {
+  logsContainer.innerHTML = '';
+  logState.entries.filter(matchesLogFilter).forEach(appendLogRow);
+  if (logAutoscroll.checked) {
+    logsContainer.scrollTop = logsContainer.scrollHeight;
+  }
+  updateLogStatus();
+}
+
+function updateLogStatus() {
+  logCount.textContent = `${logsContainer.children.length}/${logState.entries.length} dòng`;
+
+  if (logState.paused) {
+    logStateLabel.textContent = `❚❚ tạm dừng (+${logState.pendingWhilePaused})`;
+    logStateLabel.className = 'log-state-paused';
+  } else {
+    logStateLabel.textContent = '● đang chạy';
+    logStateLabel.className = 'log-state-live';
+  }
+}
+
+[logLevelFilter, logSourceFilter].forEach(el => el.addEventListener('change', renderLogs));
+logSearch.addEventListener('input', renderLogs);
+
+logPauseBtn.addEventListener('click', () => {
+  logState.paused = !logState.paused;
+  logPauseBtn.textContent = logState.paused ? 'Tiếp tục' : 'Tạm dừng';
+  if (!logState.paused) {
+    logState.pendingWhilePaused = 0;
+    renderLogs();
+  }
+  updateLogStatus();
+});
+
+logClearBtn.addEventListener('click', async () => {
+  logState.entries = [];
+  logState.pendingWhilePaused = 0;
+  logsContainer.innerHTML = '';
+  try {
+    await fetch('/api/debug/logs', { method: 'DELETE' });
+  } catch (err) {
+    console.error('Clear server logs failed:', err);
+  }
+  updateLogStatus();
+});
+
+logDownloadBtn.addEventListener('click', () => {
+  const text = logState.entries
+    .map(e => `${e.ts} [${e.level.toUpperCase()}] (${e.source}) ${e.message}`)
+    .join('\n');
+  const url = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `gateway-${new Date().toISOString().replace(/[:.]/g, '-')}.log`;
+  link.click();
+  URL.revokeObjectURL(url);
+});
+
+logRawSerial.addEventListener('change', async () => {
+  try {
+    const res = await fetch('/api/debug/raw', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: logRawSerial.checked })
+    });
+    const data = await res.json();
+    logRawSerial.checked = data.captureRawSerial;
+  } catch (err) {
+    addLog('error', `Không đổi được chế độ bắt serial thô: ${err.message}`);
+    logRawSerial.checked = !logRawSerial.checked;
+  }
+});
+
+socket.on('debugLog', (entry) => pushLogEntry(entry));
 
 // Fetch system status
 async function fetchSystemStatus() {
