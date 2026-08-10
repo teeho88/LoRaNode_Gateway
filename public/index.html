@@ -161,6 +161,51 @@
 
       <section id="tab-logs" class="logs-section tab-panel" data-tab-panel="logs">
         <h2>Nhật ký hệ thống</h2>
+
+        <div class="log-toolbar">
+          <label class="log-filter">
+            Mức
+            <select id="log-level-filter">
+              <option value="all">Tất cả</option>
+              <option value="debug">Debug trở lên</option>
+              <option value="info">Info trở lên</option>
+              <option value="warning">Cảnh báo trở lên</option>
+              <option value="error">Chỉ lỗi</option>
+            </select>
+          </label>
+
+          <label class="log-filter">
+            Nguồn
+            <select id="log-source-filter">
+              <option value="all">Tất cả</option>
+            </select>
+          </label>
+
+          <label class="log-filter log-filter-grow">
+            Tìm
+            <input type="text" id="log-search" placeholder="lọc theo nội dung..." autocomplete="off">
+          </label>
+
+          <label class="log-toggle">
+            <input type="checkbox" id="log-raw-serial">
+            Bắt byte serial thô
+          </label>
+
+          <label class="log-toggle">
+            <input type="checkbox" id="log-autoscroll" checked>
+            Tự cuộn
+          </label>
+
+          <button type="button" id="log-pause" class="btn-secondary">Tạm dừng</button>
+          <button type="button" id="log-clear" class="btn-secondary">Xóa</button>
+          <button type="button" id="log-download" class="btn-secondary">Tải .log</button>
+        </div>
+
+        <div class="log-status">
+          <span id="log-count">0 dòng</span>
+          <span id="log-state" class="log-state-live">● đang chạy</span>
+        </div>
+
         <div id="logs" class="logs-container"></div>
       </section>
     </main>

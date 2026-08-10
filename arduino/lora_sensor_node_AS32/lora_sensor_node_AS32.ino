@@ -304,22 +304,38 @@ void setRelay(bool state) {
 }
 
 void sendSensorData() {
+  // NaN readings must never be serialized: round(NAN) yields LONG_MIN on AVR,
+  // which is sent as -2.147484e8 and corrupts the packet.
+  bool sensor1Valid = !isnan(temperature1) && !isnan(humidity1);
+  bool sensor2Valid = !isnan(temperature2) && !isnan(humidity2);
+
+  if (!sensor1Valid && !sensor2Valid) {
+    Serial.println(F("Skip send: no valid sensor reading yet"));
+    return;
+  }
+
   // Create JSON document (increased size for 2 sensors)
   StaticJsonDocument<360> doc;
   doc["id"] = nodeId;
   doc["uid"] = nodeUid;
 
   // Sensor 1 data
-  doc["temp1"] = round(temperature1 * 10) / 10.0;  // Round to 1 decimal
-  doc["hum1"] = round(humidity1 * 10) / 10.0;
+  if (sensor1Valid) {
+    doc["temp1"] = round(temperature1 * 10) / 10.0;  // Round to 1 decimal
+    doc["hum1"] = round(humidity1 * 10) / 10.0;
+  }
 
   // Sensor 2 data
-  doc["temp2"] = round(temperature2 * 10) / 10.0;
-  doc["hum2"] = round(humidity2 * 10) / 10.0;
+  if (sensor2Valid) {
+    doc["temp2"] = round(temperature2 * 10) / 10.0;
+    doc["hum2"] = round(humidity2 * 10) / 10.0;
+  }
 
   // Average values
-  doc["temp"] = round(avgTemperature * 10) / 10.0;
-  doc["hum"] = round(avgHumidity * 10) / 10.0;
+  if (!isnan(avgTemperature) && !isnan(avgHumidity)) {
+    doc["temp"] = round(avgTemperature * 10) / 10.0;
+    doc["hum"] = round(avgHumidity * 10) / 10.0;
+  }
 
   doc["relay"] = relayState;
   doc["manual"] = manualControl;

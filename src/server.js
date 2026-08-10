@@ -890,6 +890,74 @@ function cleanupGPIO() {
   }
 }
 
+// Debug log ring buffer streamed to the web UI
+const DEBUG_LOG_LIMIT = parseInt(process.env.DEBUG_LOG_LIMIT, 10) || 500;
+const debugLogs = [];
+let debugSeq = 0;
+let captureRawSerial = String(process.env.CAPTURE_RAW_SERIAL || 'false').toLowerCase() === 'true';
+let insideDebugLog = false; // guards the console hook against recursion
+
+function pushDebugLog(level, source, message) {
+  const entry = {
+    seq: ++debugSeq,
+    ts: new Date().toISOString(),
+    level,
+    source,
+    message
+  };
+
+  debugLogs.push(entry);
+  if (debugLogs.length > DEBUG_LOG_LIMIT) {
+    debugLogs.shift();
+  }
+
+  if (io) {
+    io.emit('debugLog', entry);
+  }
+  return entry;
+}
+
+function debugLog(level, source, message) {
+  if (insideDebugLog) return;
+  insideDebugLog = true;
+  try {
+    pushDebugLog(level, source, message);
+  } finally {
+    insideDebugLog = false;
+  }
+}
+
+// Mirror every existing console output into the debug stream so the UI shows
+// the same text as `journalctl -u <service>`.
+function hookConsole() {
+  const levels = { log: 'info', info: 'info', warn: 'warning', error: 'error' };
+
+  for (const [method, level] of Object.entries(levels)) {
+    const original = console[method].bind(console);
+    console[method] = (...args) => {
+      original(...args);
+      if (insideDebugLog) return;
+      insideDebugLog = true;
+      try {
+        const message = args
+          .map((arg) => {
+            if (typeof arg === 'string') return arg;
+            if (arg instanceof Error) return arg.stack || arg.message;
+            try {
+              return JSON.stringify(arg);
+            } catch {
+              return String(arg);
+            }
+          })
+          .join(' ');
+        pushDebugLog(level, 'console', message);
+      } finally {
+        insideDebugLog = false;
+      }
+    };
+  }
+}
+
 // Serial Port Configuration
 let port;
 let serialBuffer = ''; // Buffer for packet framing (persistent across lines)
@@ -911,10 +979,22 @@ function initSerialPort() {
       console.error('Serial port error:', err.message);
     });
 
+    port.on('close', () => {
+      debugLog('warning', 'serial', `Port ${SERIAL_PORT} closed`);
+    });
+
     // Listen to raw data (byte by byte) for better packet framing control
     port.on('data', (data) => {
       try {
         const chunk = data.toString('utf8');
+
+        if (captureRawSerial) {
+          debugLog(
+            'debug',
+            'serial-raw',
+            `${data.length}B ascii=${JSON.stringify(chunk)} hex=${data.toString('hex')}`
+          );
+        }
 
         // Process each character
         for (let char of chunk) {
@@ -929,7 +1009,12 @@ function initSerialPort() {
                 handleSensorData(jsonData);
               } catch (err) {
                 console.error('❌ JSON Parse Error:', err.message);
-                console.error('   Buffer:', serialBuffer.substring(0, 100) + '...');
+                console.error(`   Buffer (${serialBuffer.length}B):`, serialBuffer);
+                debugLog(
+                  'error',
+                  'parse',
+                  `${err.message} | len=${serialBuffer.length} | payload=${serialBuffer}`
+                );
               }
               serialBuffer = '';
             }
@@ -961,7 +1046,30 @@ function initSerialPort() {
   }
 }
 
-function handleSensorData(data) {
+const SENSOR_RANGES = {
+  temp: [-40, 85],
+  temp1: [-40, 85],
+  temp2: [-40, 85],
+  hum: [0, 100],
+  hum1: [0, 100],
+  hum2: [0, 100]
+};
+
+function sanitizeSensorFields(data) {
+  for (const [field, [min, max]] of Object.entries(SENSOR_RANGES)) {
+    const value = data[field];
+    if (value === undefined) continue;
+    if (!Number.isFinite(value) || value < min || value > max) {
+      console.warn(`⚠️  Dropped out-of-range ${field}=${value} from ${data.id || 'unknown'}`);
+      debugLog('warning', 'sanitize', `${data.id || 'unknown'}: dropped ${field}=${value} (allowed ${min}..${max})`);
+      delete data[field];
+    }
+  }
+  return data;
+}
+
+function handleSensorData(rawData) {
+  const data = sanitizeSensorFields(rawData);
   const timestamp = new Date().toISOString();
   const nodeKey = getNodeKey(data);
 
@@ -1479,6 +1587,38 @@ app.get('/api/status', (req, res) => {
   });
 });
 
+// Debug logs
+app.get('/api/debug/logs', (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit, 10) || DEBUG_LOG_LIMIT, DEBUG_LOG_LIMIT);
+  const since = parseInt(req.query.since, 10);
+
+  let logs = debugLogs;
+  if (Number.isInteger(since)) {
+    logs = logs.filter((entry) => entry.seq > since);
+  }
+
+  res.json({
+    success: true,
+    captureRawSerial,
+    limit: DEBUG_LOG_LIMIT,
+    count: logs.length,
+    logs: logs.slice(-limit)
+  });
+});
+
+// Toggle raw serial byte capture (verbose; off by default)
+app.post('/api/debug/raw', (req, res) => {
+  captureRawSerial = req.body.enabled === true;
+  debugLog('info', 'debug', `Raw serial capture ${captureRawSerial ? 'ENABLED' : 'DISABLED'}`);
+  res.json({ success: true, captureRawSerial });
+});
+
+app.delete('/api/debug/logs', (_req, res) => {
+  debugLogs.length = 0;
+  debugLog('info', 'debug', 'Debug log buffer cleared');
+  res.json({ success: true });
+});
+
 // Health check
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok' });
@@ -1493,7 +1633,9 @@ io.on('connection', (socket) => {
   socket.emit('initialData', {
     nodes: Array.from(sensorData.values()),
     history: dataHistory.slice(-50), // Last 50 records
-    gatewaySync: gatewayLoraSync
+    gatewaySync: gatewayLoraSync,
+    debugLogs: debugLogs.slice(-200),
+    captureRawSerial
   });
 
   socket.on('disconnect', () => {
@@ -1614,6 +1756,9 @@ io.on('connection', (socket) => {
 });
 
 function startBackgroundJobs() {
+  hookConsole();
+  debugLog('info', 'system', `Gateway starting | serial=${SERIAL_PORT}@${BAUD_RATE} | rawCapture=${captureRawSerial}`);
+
   loadDailyStats();
   loadLoraNetwork();
   loadGatewayLoraSync();
