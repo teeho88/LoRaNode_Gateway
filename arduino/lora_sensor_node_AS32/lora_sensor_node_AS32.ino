@@ -174,6 +174,10 @@ void readSensors() {
   bool sensor2Valid = !isnan(humidity2) && !isnan(temperature2);
 
   if (!sensor1Valid && !sensor2Valid) {
+    // Do not keep the previous average around: it would be reported as if it
+    // were a fresh reading.
+    avgTemperature = NAN;
+    avgHumidity = NAN;
     Serial.println(F("Failed to read from both DHT sensors!"));
     return;
   }
@@ -272,39 +276,35 @@ void setRelay(bool state) {
   digitalWrite(RELAY_PIN, state ? HIGH : LOW);
 }
 
-void sendSensorData() {
-  // NaN readings must never be serialized: round(NAN) yields LONG_MIN on AVR,
-  // which is sent as -2.147484e8 and corrupts the packet.
-  bool sensor1Valid = !isnan(temperature1) && !isnan(humidity1);
-  bool sensor2Valid = !isnan(temperature2) && !isnan(humidity2);
-
-  if (!sensor1Valid && !sensor2Valid) {
-    Serial.println(F("Skip send: no valid sensor reading yet"));
-    return;
+// Writes a rounded reading, or JSON null when the sensor did not answer.
+// Never pass NAN to round(): on AVR it yields LONG_MIN, which serializes as
+// -2.147484e8 and both corrupts the value and bloats the packet.
+void putReading(JsonDocument &doc, const char* key, float value) {
+  if (isnan(value)) {
+    doc[key] = nullptr;
+  } else {
+    doc[key] = round(value * 10) / 10.0;  // Round to 1 decimal
   }
+}
 
-  // Create JSON document (increased size for 2 sensors)
+void sendSensorData() {
+  // Keep transmitting even when the sensors are dead: the packet is what tells
+  // the gateway this node is still alive, and null marks the broken readings.
   StaticJsonDocument<360> doc;
   doc["id"] = nodeId;
   doc["uid"] = nodeUid;
 
   // Sensor 1 data
-  if (sensor1Valid) {
-    doc["temp1"] = round(temperature1 * 10) / 10.0;  // Round to 1 decimal
-    doc["hum1"] = round(humidity1 * 10) / 10.0;
-  }
+  putReading(doc, "temp1", temperature1);
+  putReading(doc, "hum1", humidity1);
 
   // Sensor 2 data
-  if (sensor2Valid) {
-    doc["temp2"] = round(temperature2 * 10) / 10.0;
-    doc["hum2"] = round(humidity2 * 10) / 10.0;
-  }
+  putReading(doc, "temp2", temperature2);
+  putReading(doc, "hum2", humidity2);
 
   // Average values
-  if (!isnan(avgTemperature) && !isnan(avgHumidity)) {
-    doc["temp"] = round(avgTemperature * 10) / 10.0;
-    doc["hum"] = round(avgHumidity * 10) / 10.0;
-  }
+  putReading(doc, "temp", avgTemperature);
+  putReading(doc, "hum", avgHumidity);
 
   doc["relay"] = relayState;
   doc["manual"] = manualControl;
