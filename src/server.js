@@ -36,8 +36,6 @@ const USE_GPIO_LORA_MODE = String(process.env.USE_GPIO_LORA_MODE || 'false').toL
 const DATA_DIR = path.join(__dirname, '../data');
 const DAILY_STATS_FILE = path.join(DATA_DIR, 'daily-stats.json');
 const NODE_CONFIGS_FILE = path.join(DATA_DIR, 'node-configs.json');
-const LORA_NETWORK_FILE = path.join(DATA_DIR, 'lora-network.json');
-const GATEWAY_SYNC_FILE = path.join(DATA_DIR, 'gateway-lora-sync.json');
 const BACKUP_INTERVAL = parseInt(process.env.BACKUP_INTERVAL) || 3600000; // 1 hour default
 const ANALYTICS_WINDOW_MINUTES = parseInt(process.env.ANALYTICS_WINDOW_MINUTES, 10) || 120;
 const ANALYTICS_FORECAST_MINUTES = parseInt(process.env.ANALYTICS_FORECAST_MINUTES, 10) || 30;
@@ -81,28 +79,6 @@ const dailyStats = new Map();
 
 // Node configuration storage: Map<nodeId, config>
 const nodeConfigs = new Map();
-
-const DEFAULT_LORA_NETWORK = {
-  gatewayAddress: 0,
-  networkId: 0,
-  channel: 23,
-  baudRateCode: 9,
-  airRate: 5,
-  power: 0
-};
-
-let loraNetwork = {
-  ...DEFAULT_LORA_NETWORK,
-  updatedAt: new Date().toISOString()
-};
-
-let gatewayLoraSync = {
-  requiredProfileVersion: loraNetwork.updatedAt,
-  appliedProfileVersion: null,
-  inSync: false,
-  updatedAt: new Date().toISOString(),
-  note: 'Gateway profile chưa được xác nhận.'
-};
 
 // Helper function to get date string (YYYY-MM-DD)
 function getDateString(date = new Date()) {
@@ -237,83 +213,6 @@ function loadNodeConfigs() {
   }
 }
 
-function saveLoraNetwork() {
-  try {
-    fs.writeFileSync(LORA_NETWORK_FILE, JSON.stringify(loraNetwork, null, 2));
-  } catch (err) {
-    console.error('❌ Failed to save LoRa network config:', err.message);
-  }
-}
-
-function loadLoraNetwork() {
-  try {
-    if (!fs.existsSync(LORA_NETWORK_FILE)) {
-      console.log('📂 No LoRa network config found (using defaults)');
-      saveLoraNetwork();
-      return;
-    }
-
-    loraNetwork = normalizeLoraNetwork(JSON.parse(fs.readFileSync(LORA_NETWORK_FILE, 'utf8')));
-    console.log('📂 Loaded LoRa network config');
-  } catch (err) {
-    console.error('❌ Failed to load LoRa network config:', err.message);
-  }
-}
-
-function saveGatewayLoraSync() {
-  try {
-    fs.writeFileSync(GATEWAY_SYNC_FILE, JSON.stringify(gatewayLoraSync, null, 2));
-  } catch (err) {
-    console.error('❌ Failed to save gateway LoRa sync state:', err.message);
-  }
-}
-
-function refreshGatewaySyncState(note) {
-  const requiredProfileVersion = loraNetwork.updatedAt;
-  gatewayLoraSync = {
-    requiredProfileVersion,
-    appliedProfileVersion: gatewayLoraSync.appliedProfileVersion || null,
-    inSync: gatewayLoraSync.appliedProfileVersion === requiredProfileVersion,
-    updatedAt: new Date().toISOString(),
-    note: note || gatewayLoraSync.note || ''
-  };
-}
-
-function loadGatewayLoraSync() {
-  try {
-    if (fs.existsSync(GATEWAY_SYNC_FILE)) {
-      const data = JSON.parse(fs.readFileSync(GATEWAY_SYNC_FILE, 'utf8'));
-      gatewayLoraSync = {
-        ...gatewayLoraSync,
-        requiredProfileVersion: data.requiredProfileVersion || gatewayLoraSync.requiredProfileVersion,
-        appliedProfileVersion: data.appliedProfileVersion || null,
-        updatedAt: data.updatedAt || gatewayLoraSync.updatedAt,
-        note: data.note || gatewayLoraSync.note
-      };
-    }
-  } catch (err) {
-    console.error('❌ Failed to load gateway LoRa sync state:', err.message);
-  }
-
-  refreshGatewaySyncState(gatewayLoraSync.note);
-  saveGatewayLoraSync();
-}
-
-function confirmGatewaySync(appliedProfileVersion, note) {
-  gatewayLoraSync.appliedProfileVersion = appliedProfileVersion || loraNetwork.updatedAt;
-  refreshGatewaySyncState(note || 'Đã xác nhận gateway đổi sang profile mạng hiện tại.');
-  saveGatewayLoraSync();
-  return gatewayLoraSync;
-}
-
-function ensureGatewayProfileSynced() {
-  refreshGatewaySyncState(gatewayLoraSync.note);
-  if (!gatewayLoraSync.inSync) {
-    throw new Error(
-      `Gateway chưa đồng bộ profile LoRa (required=${gatewayLoraSync.requiredProfileVersion}, applied=${gatewayLoraSync.appliedProfileVersion || 'none'}). Xác nhận gateway trước khi Activate node.`
-    );
-  }
-}
 
 function matchesNodeIdentifier(record, nodeId) {
   if (!nodeId) {
@@ -654,40 +553,11 @@ function resolveNodeIdentity(target, targetUid) {
   };
 }
 
-function normalizeLoraNetwork(body) {
-  const numericFields = {
-    gatewayAddress: { min: 0, max: 65535 },
-    networkId: { min: 0, max: 255 },
-    channel: { min: 0, max: 80 },
-    baudRateCode: { min: 0, max: 19 },
-    airRate: { min: 0, max: 10 },
-    power: { min: 0, max: 3 }
-  };
-
-  const config = {
-    ...DEFAULT_LORA_NETWORK,
-    updatedAt: new Date().toISOString()
-  };
-
-  Object.entries(numericFields).forEach(([field, range]) => {
-    const rawValue = body[field] !== undefined && body[field] !== '' ? body[field] : config[field];
-    const value = Number(rawValue);
-    if (!Number.isInteger(value) || value < range.min || value > range.max) {
-      throw new Error(`${field} must be an integer from ${range.min} to ${range.max}`);
-    }
-
-    config[field] = value;
-  });
-
-  return config;
-}
-
 function normalizeNodeConfig(body) {
   const identity = resolveNodeIdentity(body.target, body.targetUid);
   const currentId = identity.target;
   const targetUid = identity.targetUid;
   const nodeId = String(body.nodeId || identity.liveNode?.id || identity.storedConfig?.nodeId || currentId).trim();
-  const existingConfig = identity.storedConfig || nodeConfigs.get(nodeId);
 
   if (!identity.inputTarget && !identity.inputTargetUid) {
     throw new Error('Target node ID or UID is required');
@@ -701,79 +571,28 @@ function normalizeNodeConfig(body) {
     throw new Error('Node ID must be 1-15 characters: letters, numbers, "_" or "-"');
   }
 
-  const addressRaw = body.address !== undefined && body.address !== ''
-    ? body.address
-    : existingConfig?.lora?.address || 1;
-  const address = Number(addressRaw);
-  if (!Number.isInteger(address) || address < 0 || address > 65535) {
-    throw new Error('address must be an integer from 0 to 65535');
-  }
-
   const config = {
     target: currentId,
     targetUid,
     nodeId,
-    lora: {
-      address,
-      ...getSharedLoraFields()
-    },
     updatedAt: new Date().toISOString()
   };
 
   return config;
 }
 
-function getSharedLoraFields() {
-  return {
-    networkId: loraNetwork.networkId,
-    channel: loraNetwork.channel,
-    baudRateCode: loraNetwork.baudRateCode,
-    airRate: loraNetwork.airRate,
-    power: loraNetwork.power
-  };
-}
-
-function buildNodeConfigCommand(config, options = {}) {
+// The node's M0/M1 are hardwired to GND, so its radio settings cannot be
+// changed remotely. Renaming is the only configuration the gateway can push.
+function buildNodeConfigCommand(config) {
   const command = {
     target: config.target,
     config: {
-      id: config.nodeId,
-      applyLora: Boolean(options.applyLora)
+      id: config.nodeId
     }
   };
 
   if (config.targetUid) {
     command.targetUid = config.targetUid;
-  }
-
-  if (Object.keys(config.lora).length > 0) {
-    command.config.lora = config.lora;
-  }
-
-  return command;
-}
-
-function buildNodeConfigActionCommand(target, action) {
-  const config = {};
-
-  if (action === 'commit') {
-    config.commitLora = true;
-  } else if (action === 'rollback') {
-    config.rollbackLora = true;
-  } else {
-    throw new Error('Unsupported config action');
-  }
-
-  const liveNode = getLiveNode(target);
-  const storedConfig = getOptionalStoredNodeConfig(target);
-  const command = {
-    target: liveNode?.id || storedConfig?.target || storedConfig?.nodeId || target,
-    config
-  };
-
-  const targetUid = liveNode?.uid || storedConfig?.targetUid;
-  if (targetUid) {
-    command.targetUid = targetUid;
   }
 
   return command;
@@ -782,15 +601,6 @@ function buildNodeConfigActionCommand(target, action) {
 function getOptionalStoredNodeConfig(target) {
   return nodeConfigs.get(target) ||
     Array.from(nodeConfigs.values()).find(item => item.nodeId === target || item.target === target || item.targetUid === target);
-}
-
-function getStoredNodeConfig(target) {
-  const config = getOptionalStoredNodeConfig(target);
-  if (!config) {
-    throw new Error(`No staged configuration found for ${target}`);
-  }
-
-  return config;
 }
 
 function getLiveNode(target) {
@@ -1353,56 +1163,6 @@ app.get('/api/config/nodes', (_req, res) => {
   });
 });
 
-app.get('/api/config/network', (_req, res) => {
-  res.json({
-    success: true,
-    data: loraNetwork,
-    gatewaySync: gatewayLoraSync
-  });
-});
-
-app.post('/api/config/network', (req, res) => {
-  try {
-    loraNetwork = normalizeLoraNetwork(req.body);
-    saveLoraNetwork();
-    refreshGatewaySyncState('Profile mạng LoRa đã đổi. Cần cấu hình lại gateway trước khi Activate node.');
-    saveGatewayLoraSync();
-    io.emit('gatewaySyncUpdated', gatewayLoraSync);
-
-    res.json({
-      success: true,
-      message: 'LoRa network profile saved. Apply node configuration to push it to nodes.',
-      data: loraNetwork,
-      gatewaySync: gatewayLoraSync
-    });
-  } catch (err) {
-    res.status(400).json({
-      success: false,
-      message: err.message
-    });
-  }
-});
-
-app.get('/api/config/gateway/sync', (_req, res) => {
-  refreshGatewaySyncState(gatewayLoraSync.note);
-  res.json({
-    success: true,
-    data: gatewayLoraSync
-  });
-});
-
-app.post('/api/config/gateway/confirm', (req, res) => {
-  const appliedProfileVersion = String(req.body?.appliedProfileVersion || '').trim();
-  const note = String(req.body?.note || '').trim();
-  const syncState = confirmGatewaySync(appliedProfileVersion, note || 'Gateway đã được cấu hình sang profile mới.');
-  io.emit('gatewaySyncUpdated', syncState);
-
-  res.json({
-    success: true,
-    data: syncState
-  });
-});
-
 app.post('/api/config/node', (req, res) => {
   try {
     const config = normalizeNodeConfig(req.body);
@@ -1428,70 +1188,6 @@ app.post('/api/config/node', (req, res) => {
   }
 });
 
-app.post('/api/config/node/activate', (req, res) => {
-  try {
-    const { target, targetUid } = req.body;
-    if (!target && !targetUid) {
-      return res.status(400).json({ success: false, message: 'Target node ID or UID is required' });
-    }
-
-    const targetKey = String(targetUid || target || '').trim();
-    ensureGatewayProfileSynced();
-    const config = getStoredNodeConfig(targetKey);
-    const command = buildNodeConfigCommand(config, { applyLora: true });
-    sendCommand(command);
-
-    res.json({
-      success: true,
-      message: `Activation sent to ${command.target}. Node will auto-rollback if not committed.`,
-      command
-    });
-  } catch (err) {
-    res.status(400).json({ success: false, message: err.message });
-  }
-});
-
-app.post('/api/config/node/commit', (req, res) => {
-  try {
-    const { target, targetUid } = req.body;
-    if (!target && !targetUid) {
-      return res.status(400).json({ success: false, message: 'Target node ID or UID is required' });
-    }
-
-    const targetKey = String(targetUid || target || '').trim();
-    const command = buildNodeConfigActionCommand(targetKey, 'commit');
-    sendCommand(command);
-
-    res.json({
-      success: true,
-      message: `Commit sent to ${command.target}`,
-      command
-    });
-  } catch (err) {
-    res.status(400).json({ success: false, message: err.message });
-  }
-});
-
-app.post('/api/config/node/rollback', (req, res) => {
-  try {
-    const { target, targetUid } = req.body;
-    if (!target && !targetUid) {
-      return res.status(400).json({ success: false, message: 'Target node ID or UID is required' });
-    }
-
-    const targetKey = String(targetUid || target || '').trim();
-    const command = buildNodeConfigActionCommand(targetKey, 'rollback');
-    sendCommand(command);
-
-    res.json({
-      success: true,
-      message: `Rollback sent to ${command.target}`,
-      command
-    });
-  } catch (err) {
-    res.status(400).json({ success: false, message: err.message });
-  }
-});
 
 // Get daily statistics for a node
 app.get('/api/daily-stats/:nodeId', (req, res) => {
@@ -1572,8 +1268,6 @@ app.get('/api/status', (req, res) => {
       baudRate: BAUD_RATE,
       isOpen: port ? port.isOpen : false
     },
-    loraNetwork,
-    gatewayLoraSync,
     nodes: sensorData.size,
     historySize: dataHistory.length,
     dailyStatsCount: totalDailyStats,
@@ -1633,7 +1327,6 @@ io.on('connection', (socket) => {
   socket.emit('initialData', {
     nodes: Array.from(sensorData.values()),
     history: dataHistory.slice(-50), // Last 50 records
-    gatewaySync: gatewayLoraSync,
     debugLogs: debugLogs.slice(-200),
     captureRawSerial
   });
@@ -1688,71 +1381,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('saveLoraNetwork', (data) => {
-    try {
-      loraNetwork = normalizeLoraNetwork(data);
-      saveLoraNetwork();
-      refreshGatewaySyncState('Profile mạng LoRa đã đổi. Cần cấu hình lại gateway trước khi Activate node.');
-      saveGatewayLoraSync();
-      io.emit('loraNetworkUpdated', { success: true, data: loraNetwork });
-      io.emit('gatewaySyncUpdated', gatewayLoraSync);
-    } catch (err) {
-      socket.emit('configError', { success: false, message: err.message });
-    }
-  });
-
-  socket.on('activateNodeConfig', (data) => {
-    try {
-      const targetKey = String(data.targetUid || data.target || '').trim();
-      ensureGatewayProfileSynced();
-      const config = getStoredNodeConfig(targetKey);
-      const command = buildNodeConfigCommand(config, { applyLora: true });
-      sendCommand(command);
-      socket.emit('configActionSent', {
-        success: true,
-        action: 'activate',
-        target: command.target,
-        message: 'Activation sent. Node will auto-rollback if not committed.',
-        command
-      });
-    } catch (err) {
-      socket.emit('configError', { success: false, message: err.message });
-    }
-  });
-
-  socket.on('commitNodeConfig', (data) => {
-    try {
-      const targetKey = String(data.targetUid || data.target || '').trim();
-      const command = buildNodeConfigActionCommand(targetKey, 'commit');
-      sendCommand(command);
-      socket.emit('configActionSent', {
-        success: true,
-        action: 'commit',
-        target: command.target,
-        message: 'Commit sent',
-        command
-      });
-    } catch (err) {
-      socket.emit('configError', { success: false, message: err.message });
-    }
-  });
-
-  socket.on('rollbackNodeConfig', (data) => {
-    try {
-      const targetKey = String(data.targetUid || data.target || '').trim();
-      const command = buildNodeConfigActionCommand(targetKey, 'rollback');
-      sendCommand(command);
-      socket.emit('configActionSent', {
-        success: true,
-        action: 'rollback',
-        target: command.target,
-        message: 'Rollback sent',
-        command
-      });
-    } catch (err) {
-      socket.emit('configError', { success: false, message: err.message });
-    }
-  });
 });
 
 function startBackgroundJobs() {
@@ -1760,8 +1388,6 @@ function startBackgroundJobs() {
   debugLog('info', 'system', `Gateway starting | serial=${SERIAL_PORT}@${BAUD_RATE} | rawCapture=${captureRawSerial}`);
 
   loadDailyStats();
-  loadLoraNetwork();
-  loadGatewayLoraSync();
   loadNodeConfigs();
 
   initGPIO();
@@ -1769,7 +1395,6 @@ function startBackgroundJobs() {
 
   setInterval(() => {
     saveDailyStats();
-    saveGatewayLoraSync();
   }, BACKUP_INTERVAL);
 
   const now = new Date();
@@ -1833,8 +1458,6 @@ process.on('SIGINT', () => {
   // Save daily stats before exit
   saveDailyStats();
   saveNodeConfigs();
-  saveLoraNetwork();
-  saveGatewayLoraSync();
 
   // Cleanup GPIO
   cleanupGPIO();
@@ -1854,8 +1477,6 @@ process.on('SIGTERM', () => {
   console.log('\nSIGTERM received, saving data...');
   saveDailyStats();
   saveNodeConfigs();
-  saveLoraNetwork();
-  saveGatewayLoraSync();
 
   // Cleanup GPIO
   cleanupGPIO();
