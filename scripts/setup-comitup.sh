@@ -22,7 +22,9 @@ export LANG=C
 export DEBIAN_FRONTEND=noninteractive
 
 AP_NAME="${AP_NAME:-HTGSNDDA-<nnnn>}"
-AP_PASSWORD="${AP_PASSWORD:-htgsndda2025}"
+# De rong = AP mo. Dat mat khau bang bien moi truong neu can, nhung xem ghi
+# chu o phan ghi /etc/comitup.conf ben duoi truoc khi lam.
+AP_PASSWORD="${AP_PASSWORD:-}"
 WIFI_DEV="${WIFI_DEV:-wlan0}"
 APT_SOURCE_DEB="https://davesteele.github.io/comitup/latest/davesteele-comitup-apt-source_latest.deb"
 WORKDIR="$(mktemp -d)"
@@ -163,6 +165,11 @@ fi
 
 apt-get install -y comitup
 
+# Goi comitup khoi dong ngay khi cai, tao san mot profile AP theo config mac
+# dinh. Dung no lai truoc khi ghi config cua minh, neu khong se con lai mot
+# profile "comitup-<nnn>-0000" thua trong NetworkManager.
+systemctl stop comitup 2>/dev/null || true
+
 # comitup-web / comitup-cli chi tach goi rieng o repo davesteele; ban Debian
 # da gop san vao goi comitup.
 for extra in comitup-web comitup-cli; do
@@ -184,7 +191,12 @@ cat > /etc/comitup.conf <<EOF
 # <nnnn> se duoc Comitup thay bang so dinh danh rieng cua tung Pi.
 ap_name: ${AP_NAME}
 
-# Mat khau AP (>= 8 ky tu). De rong = AP mo, ai cung vao doi duoc WiFi.
+# Mat khau AP. De RONG = AP mo (mac dinh).
+#
+# Da thu dat mat khau tren Comitup 1.43 / Raspberry Pi OS trixie: AP hien ra
+# binh thuong nhung dien thoai khong bat tay WPA duoc, xoa mat khau di thi vao
+# ngay. Vi vay mac dinh de mo. AP nay chi ton tai khi Pi chua co mang, va qua
+# do chi lam duoc mot viec la chon WiFi, nen rui ro thap.
 ap_password: ${AP_PASSWORD}
 
 # Card WiFi dung cho ca AP lan client.
@@ -194,6 +206,31 @@ primary_wifi_device: ${WIFI_DEV}
 enable_appliance_mode: 1
 EOF
 chmod 600 /etc/comitup.conf
+
+# Xoa profile AP con lai tu config mac dinh (ten "comitup-<nnn>-0000"). De lai
+# hai profile AP tren cung mot card thi NetworkManager co the kich hoat nham
+# cai cu - cai do la mang mo, nen dien thoai gui mat khau vao se that bai.
+echo ""
+echo "🧹 Don profile AP thua..."
+AP_PREFIX="${AP_NAME%%<*}"
+CONS="$(nmcli -t -f NAME,TYPE con show 2>/dev/null || true)"
+while IFS= read -r line; do
+  [ -z "$line" ] && continue
+  con_name="${line%:*}"
+  con_type="${line##*:}"
+  [ "$con_type" = "802-11-wireless" ] || continue
+  # Khong dung vao profile cua chinh lan cai nay
+  case "$con_name" in
+    "${AP_PREFIX}"*) continue ;;
+    comitup-*) ;;
+    *) continue ;;
+  esac
+  con_mode="$(nmcli -g 802-11-wireless.mode con show "$con_name" 2>/dev/null || true)"
+  if [ "$con_mode" = "ap" ]; then
+    echo "   - xoa ${con_name}"
+    nmcli con delete "$con_name" >/dev/null 2>&1 || true
+  fi
+done <<< "$CONS"
 
 echo ""
 echo "🚀 Bat dich vu comitup..."
