@@ -15,6 +15,12 @@ npm-debug.log*
 Thumbs.db
 data/
 
+# Backup files
+*.bak
+*.bak-*
+*.orig
+*~
+
 # IDE
 .vscode/
 .idea/
