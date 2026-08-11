@@ -109,23 +109,34 @@ fi
 # Go khoa rfkill neu co
 rfkill unblock wifi 2>/dev/null || true
 
-# --- Them apt source cua Comitup ----------------------------------------
-echo ""
-echo "📦 Them apt source cua Comitup..."
-if ! wget -q -O "${WORKDIR}/comitup-apt-source.deb" "$APT_SOURCE_DEB"; then
-  echo "❌ Khong tai duoc ${APT_SOURCE_DEB}"
-  echo "   Kiem tra mang, hoac lay link moi tai https://davesteele.github.io/comitup/"
-  exit 1
-fi
-dpkg -i --force-all "${WORKDIR}/comitup-apt-source.deb"
-apt-get update
-
 # --- Cai Comitup --------------------------------------------------------
+# Debian trixie tro di da co comitup trong repo chinh thuc, khong can repo
+# ngoai. Chi khi khong tim thay moi dung apt source cua davesteele.
 echo ""
-echo "📦 Cai comitup + comitup-web + comitup-cli..."
-apt-get install -y comitup comitup-web comitup-cli
+if apt-cache policy comitup 2>/dev/null | grep -q "Candidate: [0-9]"; then
+  echo "📦 Cai comitup tu repo Debian ($(apt-cache policy comitup | awk '/Candidate:/{print $2}'))..."
+else
+  echo "📦 comitup khong co trong repo Debian - them apt source cua davesteele..."
+  if ! wget -q -O "${WORKDIR}/comitup-apt-source.deb" "$APT_SOURCE_DEB"; then
+    echo "❌ Khong tai duoc ${APT_SOURCE_DEB}"
+    echo "   Kiem tra mang, hoac lay link moi tai https://davesteele.github.io/comitup/"
+    exit 1
+  fi
+  dpkg -i --force-all "${WORKDIR}/comitup-apt-source.deb"
+  apt-get update
+fi
 
-# avahi cho ten mien comitup.local
+apt-get install -y comitup
+
+# comitup-web / comitup-cli chi tach goi rieng o repo davesteele; ban Debian
+# da gop san vao goi comitup.
+for extra in comitup-web comitup-cli; do
+  if apt-cache policy "$extra" 2>/dev/null | grep -q "Candidate: [0-9]"; then
+    apt-get install -y "$extra"
+  fi
+done
+
+# avahi cho ten mien comitup.local (thuong da la dependency cua comitup)
 apt-get install -y avahi-daemon
 systemctl enable --now avahi-daemon
 
@@ -152,13 +163,16 @@ chmod 600 /etc/comitup.conf
 echo ""
 echo "🚀 Bat dich vu comitup..."
 systemctl enable comitup
-systemctl enable comitup-web
+# comitup-web.service khong co o moi ban dong goi
+if systemctl list-unit-files | grep -q "^comitup-web\.service"; then
+  systemctl enable comitup-web
+fi
 
 # --- Kiem tra -----------------------------------------------------------
 echo ""
 echo "🔍 Kiem tra cai dat..."
 FAIL=0
-for svc in NetworkManager comitup comitup-web avahi-daemon; do
+for svc in NetworkManager comitup avahi-daemon; do
   if systemctl is-enabled --quiet "$svc" 2>/dev/null; then
     echo "   ✅ ${svc}: enabled"
   else
@@ -166,6 +180,10 @@ for svc in NetworkManager comitup comitup-web avahi-daemon; do
     FAIL=1
   fi
 done
+if systemctl list-unit-files | grep -q "^comitup-web\.service"; then
+  systemctl is-enabled --quiet comitup-web && echo "   ✅ comitup-web: enabled" || {
+    echo "   ❌ comitup-web: CHUA enabled"; FAIL=1; }
+fi
 
 echo ""
 echo "========================================"

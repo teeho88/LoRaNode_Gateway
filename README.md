@@ -263,6 +263,10 @@ Cách dùng sau khi cài:
 
 Lệnh kiểm tra trên Pi: `comitup-cli`, `systemctl status comitup`, `journalctl -u comitup -f`.
 
+Trên Raspberry Pi OS trixie (Debian 13) — bản đang chạy trên gateway — `comitup 1.43-1`
+nằm sẵn trong repo Debian chính thức nên script cài thẳng từ đó. Với bản cũ hơn không có
+gói này, script tự thêm apt source của davesteele.
+
 Comitup chuyển quyền quản lý `wlan0` sang NetworkManager và tắt `dhcpcd`,
 `wpa_supplicant@wlan0`, `dnsmasq`. Script tự sao lưu `/etc/network/interfaces`
 và `/etc/comitup.conf` trước khi sửa. Giao diện comitup chạy ở port 80, dashboard
