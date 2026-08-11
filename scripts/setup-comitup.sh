@@ -15,12 +15,44 @@
 
 set -euo pipefail
 
+# apt/systemctl dich ten truong theo locale ("Candidate:" -> tieng Viet khi chay
+# o console cua Pi dat locale vi_VN). Ep C de output luon on dinh khi parse.
+export LC_ALL=C
+export LANG=C
+export DEBIAN_FRONTEND=noninteractive
+
 AP_NAME="${AP_NAME:-HTGSNDDA-<nnnn>}"
 AP_PASSWORD="${AP_PASSWORD:-htgsndda2025}"
 WIFI_DEV="${WIFI_DEV:-wlan0}"
 APT_SOURCE_DEB="https://davesteele.github.io/comitup/latest/davesteele-comitup-apt-source_latest.deb"
 WORKDIR="$(mktemp -d)"
 trap 'rm -rf "$WORKDIR"' EXIT
+
+# --- Helper -------------------------------------------------------------
+# KHONG dung `lenh | grep -q` o day: `grep -q` dong pipe ngay khi khop, lenh
+# dau tien an SIGPIPE va thoat 141, `set -o pipefail` bien ca pipeline thanh
+# that bai. Ket qua la dieu kien bi dao nguoc dung luc tim thay. Cac ham duoi
+# gom output vao bien roi moi doi chieu nen khong dinh bay do.
+
+# Tra ve 0 neu apt biet goi nay. Dua vao ma thoat, khong parse chu, nen mien
+# nhiem voi locale.
+pkg_exists() {
+  apt-cache show "$1" >/dev/null 2>&1
+}
+
+# In ra phien ban ung vien, chi de hien thi - rong cung khong sao.
+pkg_candidate() {
+  local out
+  out="$(apt-cache policy "$1" 2>/dev/null || true)"
+  printf '%s\n' "$out" | awk '/Candidate:/ && $2 != "(none)" { print $2 }'
+}
+
+# Tra ve 0 neu systemd co unit dung ten nay.
+unit_exists() {
+  local out
+  out="$(systemctl list-unit-files --no-legend 2>/dev/null || true)"
+  printf '%s\n' "$out" | awk -v u="$1" '$1 == u { found = 1 } END { exit !found }'
+}
 
 echo "========================================"
 echo "Comitup WiFi Provisioning Setup"
@@ -51,7 +83,8 @@ fi
 # Canh bao neu dang SSH qua chinh card WiFi sap bi chuyen chu
 if [ -n "${SSH_CONNECTION:-}" ]; then
   SSH_LOCAL_IP="$(echo "$SSH_CONNECTION" | awk '{print $3}')"
-  if ip -4 addr show "$WIFI_DEV" 2>/dev/null | grep -q "$SSH_LOCAL_IP"; then
+  WIFI_ADDRS="$(ip -4 addr show "$WIFI_DEV" 2>/dev/null || true)"
+  if printf '%s\n' "$WIFI_ADDRS" | grep -F "$SSH_LOCAL_IP" >/dev/null; then
     echo ""
     echo "⚠️  Ban dang SSH qua ${WIFI_DEV} (${SSH_LOCAL_IP})."
     echo "   Cai Comitup se cat ket noi nay va co the khong vao lai duoc."
@@ -71,7 +104,9 @@ echo "🔎 Phien ban OS: ${CODENAME}"
 # --- Cai NetworkManager neu chua co -------------------------------------
 echo ""
 echo "📦 Cap nhat danh sach goi..."
-apt-get update
+# Repo ben thu ba hong chu ky (vd nodesource node_18.x dung khoa SHA1 da bi
+# tu choi) khong nen chan viec cai dat - index cua Debian van dung duoc.
+apt-get update || echo "⚠️  apt-get update bao loi o mot so repo - tiep tuc voi index hien co"
 
 if ! command -v nmcli >/dev/null 2>&1; then
   echo ""
@@ -86,14 +121,14 @@ systemctl enable --now NetworkManager
 echo ""
 echo "🧹 Go tranh chap tren ${WIFI_DEV}..."
 for svc in dhcpcd "wpa_supplicant@${WIFI_DEV}"; do
-  if systemctl list-unit-files | grep -q "^${svc}\.service"; then
+  if unit_exists "${svc}.service"; then
     echo "   - tat ${svc}"
     systemctl disable --now "${svc}.service" 2>/dev/null || true
   fi
 done
 
 # dnsmasq dung rieng se chiem port 53 cua comitup (comitup dung dnsmasq-base)
-if systemctl list-unit-files | grep -q "^dnsmasq\.service"; then
+if unit_exists "dnsmasq.service"; then
   echo "   - mask dnsmasq (Comitup tu quan ly DNS o che do AP)"
   systemctl disable --now dnsmasq.service 2>/dev/null || true
   systemctl mask dnsmasq.service 2>/dev/null || true
@@ -113,8 +148,8 @@ rfkill unblock wifi 2>/dev/null || true
 # Debian trixie tro di da co comitup trong repo chinh thuc, khong can repo
 # ngoai. Chi khi khong tim thay moi dung apt source cua davesteele.
 echo ""
-if apt-cache policy comitup 2>/dev/null | grep -q "Candidate: [0-9]"; then
-  echo "📦 Cai comitup tu repo Debian ($(apt-cache policy comitup | awk '/Candidate:/{print $2}'))..."
+if pkg_exists comitup; then
+  echo "📦 Cai comitup tu repo Debian ($(pkg_candidate comitup))..."
 else
   echo "📦 comitup khong co trong repo Debian - them apt source cua davesteele..."
   if ! wget -q -O "${WORKDIR}/comitup-apt-source.deb" "$APT_SOURCE_DEB"; then
@@ -131,7 +166,7 @@ apt-get install -y comitup
 # comitup-web / comitup-cli chi tach goi rieng o repo davesteele; ban Debian
 # da gop san vao goi comitup.
 for extra in comitup-web comitup-cli; do
-  if apt-cache policy "$extra" 2>/dev/null | grep -q "Candidate: [0-9]"; then
+  if pkg_exists "$extra"; then
     apt-get install -y "$extra"
   fi
 done
@@ -164,7 +199,7 @@ echo ""
 echo "🚀 Bat dich vu comitup..."
 systemctl enable comitup
 # comitup-web.service khong co o moi ban dong goi
-if systemctl list-unit-files | grep -q "^comitup-web\.service"; then
+if unit_exists "comitup-web.service"; then
   systemctl enable comitup-web
 fi
 
@@ -180,7 +215,7 @@ for svc in NetworkManager comitup avahi-daemon; do
     FAIL=1
   fi
 done
-if systemctl list-unit-files | grep -q "^comitup-web\.service"; then
+if unit_exists "comitup-web.service"; then
   systemctl is-enabled --quiet comitup-web && echo "   ✅ comitup-web: enabled" || {
     echo "   ❌ comitup-web: CHUA enabled"; FAIL=1; }
 fi
