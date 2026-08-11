@@ -51,6 +51,23 @@ function getNodeKey(node) {
   return node.nodeKey || node.uid || node.id;
 }
 
+function isReading(value) {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+const SENSOR_FAULT_LABELS = {
+  sensor1: 'Cảm biến trong kho (S1)',
+  sensor2: 'Cảm biến ngoài kho (S2)',
+  sensor: 'Cảm biến'
+};
+
+function sensorFaultText(faults) {
+  const names = faults.map(key => SENSOR_FAULT_LABELS[key] || key);
+  return names.length === 1
+    ? `${names[0]} không đọc được dữ liệu`
+    : `${names.join(' và ')} không đọc được dữ liệu`;
+}
+
 function getNodeLabel(node) {
   return node.uid ? `${node.id} (${node.uid})` : node.id;
 }
@@ -390,45 +407,55 @@ function createNodeCard(node) {
   if (!isOnline) {
     card.classList.add('offline');
   }
+  if (node.sensorFault) {
+    card.classList.add('sensor-fault');
+  }
 
   const timeDiff = Math.round((Date.now() - node.receivedAt) / 1000);
   const timeAgo = timeDiff < 60 ? `${timeDiff}s` : `${Math.round(timeDiff / 60)}m`;
 
   // Check if node has 2 sensors data
-  const hasTwoSensors = (node.temp1 !== undefined && node.temp2 !== undefined);
+  const hasTwoSensors = ('temp1' in node && 'temp2' in node);
+
+  const faults = new Set(node.sensorFaults || []);
+  const reading = (value, unit) => (isReading(value)
+    ? `${value}${unit}`
+    : '<span class="sensor-error">Lỗi</span>');
+  const dewPoint = (t, h) => (isReading(t) && isReading(h)
+    ? `${(t - (100 - h) / 5).toFixed(1)}°C`
+    : '<span class="sensor-error">Lỗi</span>');
+  const groupClass = (name) => (faults.has(name) ? ' sensor-faulty' : '');
 
   let sensorDataHTML = '';
   if (hasTwoSensors) {
-    const td1 = (node.temp1 - (100 - node.hum1) / 5).toFixed(1);
-    const td2 = (node.temp2 - (100 - node.hum2) / 5).toFixed(1);
 
     // Display data from 2 sensors
     sensorDataHTML = `
       <div class="node-data">
-        <div class="sensor-group">
+        <div class="sensor-group${groupClass('sensor1')}">
           <div class="sensor-label">🏠 Trong kho (S1)</div>
           <div class="sensor-values">
             <div class="data-item">
               <div class="data-label">Nhiệt độ</div>
-              <div class="data-value temp">${node.temp1}°C</div>
+              <div class="data-value temp">${reading(node.temp1, '°C')}</div>
             </div>
             <div class="data-item">
               <div class="data-label">Độ ẩm</div>
-              <div class="data-value hum">${node.hum1}%</div>
+              <div class="data-value hum">${reading(node.hum1, '%')}</div>
             </div>
           </div>
         </div>
 
-        <div class="sensor-group">
+        <div class="sensor-group${groupClass('sensor2')}">
           <div class="sensor-label">🌲 Ngoài kho (S2)</div>
           <div class="sensor-values">
             <div class="data-item">
               <div class="data-label">Nhiệt độ</div>
-              <div class="data-value temp">${node.temp2}°C</div>
+              <div class="data-value temp">${reading(node.temp2, '°C')}</div>
             </div>
             <div class="data-item">
               <div class="data-label">Độ ẩm</div>
-              <div class="data-value hum">${node.hum2}%</div>
+              <div class="data-value hum">${reading(node.hum2, '%')}</div>
             </div>
           </div>
         </div>
@@ -438,11 +465,11 @@ function createNodeCard(node) {
           <div class="sensor-values">
             <div class="data-item">
               <div class="data-label">Trong kho</div>
-              <div class="data-value temp avg">${td1}°C</div>
+              <div class="data-value temp avg">${dewPoint(node.temp1, node.hum1)}</div>
             </div>
             <div class="data-item">
               <div class="data-label">Ngoài kho</div>
-              <div class="data-value temp avg">${td2}°C</div>
+              <div class="data-value temp avg">${dewPoint(node.temp2, node.hum2)}</div>
             </div>
           </div>
         </div>
@@ -454,11 +481,11 @@ function createNodeCard(node) {
       <div class="node-data">
         <div class="data-item">
           <div class="data-label">Nhiệt độ</div>
-          <div class="data-value temp">${node.temp}°C</div>
+          <div class="data-value temp">${reading(node.temp, '°C')}</div>
         </div>
         <div class="data-item">
           <div class="data-label">Độ ẩm</div>
-          <div class="data-value hum">${node.hum}%</div>
+          <div class="data-value hum">${reading(node.hum, '%')}</div>
         </div>
       </div>
     `;
@@ -472,6 +499,8 @@ function createNodeCard(node) {
         ${isOnline ? 'ONLINE' : 'OFFLINE'}
       </span>
     </div>
+
+    ${node.sensorFault ? `<div class="sensor-alert">⚠️ ${sensorFaultText(node.sensorFaults || [])}</div>` : ''}
 
     ${sensorDataHTML}
 

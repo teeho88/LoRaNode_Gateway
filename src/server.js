@@ -865,27 +865,64 @@ const SENSOR_RANGES = {
   hum2: [0, 100]
 };
 
+// A node with dead sensors keeps transmitting so we can still see it is alive;
+// the broken readings arrive as JSON null. Normalise anything unusable to null
+// rather than dropping the key, so the dashboard can tell "sensor is broken"
+// apart from "this node never reports that field".
 function sanitizeSensorFields(data) {
   for (const [field, [min, max]] of Object.entries(SENSOR_RANGES)) {
+    if (!(field in data)) continue;
+
     const value = data[field];
-    if (value === undefined) continue;
+    if (value === null) continue;
+
     if (!Number.isFinite(value) || value < min || value > max) {
-      console.warn(`⚠️  Dropped out-of-range ${field}=${value} from ${data.id || 'unknown'}`);
-      debugLog('warning', 'sanitize', `${data.id || 'unknown'}: dropped ${field}=${value} (allowed ${min}..${max})`);
-      delete data[field];
+      console.warn(`⚠️  Out-of-range ${field}=${value} from ${data.id || 'unknown'}`);
+      debugLog('warning', 'sanitize', `${data.id || 'unknown'}: ${field}=${value} outside ${min}..${max}, marked faulty`);
+      data[field] = null;
     }
   }
   return data;
+}
+
+function isReading(value) {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+// Reports which physical sensors failed. A pair counts as faulty only when the
+// node actually sent those keys, so single-sensor nodes are not flagged.
+function evaluateSensorHealth(data) {
+  const faults = [];
+
+  if ('temp1' in data || 'hum1' in data) {
+    if (!isReading(data.temp1) || !isReading(data.hum1)) faults.push('sensor1');
+  }
+
+  if ('temp2' in data || 'hum2' in data) {
+    if (!isReading(data.temp2) || !isReading(data.hum2)) faults.push('sensor2');
+  }
+
+  if (faults.length === 0 && !isReading(data.temp) && !isReading(data.hum)) {
+    faults.push('sensor');
+  }
+
+  return {
+    sensorFaults: faults,
+    sensorFault: faults.length > 0,
+    hasReading: isReading(data.temp) || isReading(data.hum)
+  };
 }
 
 function handleSensorData(rawData) {
   const data = sanitizeSensorFields(rawData);
   const timestamp = new Date().toISOString();
   const nodeKey = getNodeKey(data);
+  const health = data.ack ? { sensorFaults: [], sensorFault: false } : evaluateSensorHealth(data);
 
   // Add timestamp to data
   const dataWithTimestamp = {
     ...data,
+    ...health,
     nodeKey,
     timestamp,
     receivedAt: Date.now()
@@ -900,29 +937,33 @@ function handleSensorData(rawData) {
     dataHistory.shift();
   }
 
-  // Update daily statistics using average values (from 2 sensors)
-  if (data.temp !== undefined && data.hum !== undefined && !data.ack) {
+  // Only real readings may enter the daily statistics
+  if (isReading(data.temp) && isReading(data.hum) && !data.ack) {
     updateDailyStats(nodeKey, data.temp, data.hum, timestamp);
   }
 
+  if (health.sensorFault) {
+    const faultNote = `${data.id}: ${health.sensorFaults.join(', ')} không đọc được`;
+    console.warn(`🛑 ${faultNote}`);
+    debugLog('warning', 'sensor', faultNote);
+  }
+
   // Log received data in compact format
-  if (data.temp1 !== undefined && data.temp2 !== undefined) {
+  const fmt = (value, unit) => (isReading(value) ? `${value}${unit}` : 'LỖI');
+  const dewPoint = (t, h) => (isReading(t) && isReading(h) ? (t - (100 - h) / 5).toFixed(1) : '--');
+  const relayNote = `Relay: ${data.relay ? '🟢 ON' : '⚪ OFF'} ${data.manual ? '[Manual]' : '[Auto]'}`;
+
+  if ('temp1' in data && 'temp2' in data) {
     // 2 sensors format
-    const td1 = (data.temp1 - (100 - data.hum1) / 5).toFixed(1);
-    const td2 = (data.temp2 - (100 - data.hum2) / 5).toFixed(1);
     console.log(
       `📊 ${data.id} | ` +
-      `In: ${data.temp1}°C ${data.hum1}% (Td:${td1}) | ` +
-      `Out: ${data.temp2}°C ${data.hum2}% (Td:${td2}) | ` +
-      `Relay: ${data.relay ? '🟢 ON' : '⚪ OFF'} ${data.manual ? '[Manual]' : '[Auto]'}`
+      `In: ${fmt(data.temp1, '°C')} ${fmt(data.hum1, '%')} (Td:${dewPoint(data.temp1, data.hum1)}) | ` +
+      `Out: ${fmt(data.temp2, '°C')} ${fmt(data.hum2, '%')} (Td:${dewPoint(data.temp2, data.hum2)}) | ` +
+      relayNote
     );
   } else {
     // Single sensor format
-    console.log(
-      `📊 ${data.id} | ` +
-      `${data.temp}°C ${data.hum}% | ` +
-      `Relay: ${data.relay ? '🟢 ON' : '⚪ OFF'} ${data.manual ? '[Manual]' : '[Auto]'}`
-    );
+    console.log(`📊 ${data.id} | ${fmt(data.temp, '°C')} ${fmt(data.hum, '%')} | ${relayNote}`);
   }
 
   // Broadcast to connected WebSocket clients

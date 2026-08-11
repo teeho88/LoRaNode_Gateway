@@ -171,6 +171,34 @@ section {
   border-left-color: #999;
 }
 
+.node-card.sensor-fault {
+  border-left-color: #dc3545;
+}
+
+.sensor-alert {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: #f8d7da;
+  color: #721c24;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.sensor-group.sensor-faulty {
+  background: rgba(220, 53, 69, 0.08);
+  border: 1px solid rgba(220, 53, 69, 0.35);
+}
+
+.sensor-error {
+  color: #dc3545;
+  font-size: 18px;
+  font-weight: 700;
+}
+
 .node-header {
   display: flex;
   justify-content: space-between;
