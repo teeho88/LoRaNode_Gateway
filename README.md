@@ -248,18 +248,30 @@ sudo bash scripts/setup-comitup.sh
 sudo reboot
 ```
 
-Đổi tên/mật khẩu điểm phát:
+Đổi tên điểm phát:
 
 ```bash
-sudo AP_NAME="HTGSNDDA-<nnnn>" AP_PASSWORD="matkhau8kytu" bash scripts/setup-comitup.sh
+sudo AP_NAME="HTGSNDDA-<nnnn>" bash scripts/setup-comitup.sh
 ```
 
 Cách dùng sau khi cài:
 
 1. Pi không nối được WiFi đã lưu → tự phát AP tên `HTGSNDDA-<số>`.
-2. Điện thoại kết nối vào AP đó (mật khẩu mặc định `htgsndda2025`).
+2. Điện thoại tắt dữ liệu di động, rồi kết nối vào AP đó (**mạng mở, không mật khẩu**).
 3. Trình duyệt tự mở trang cấu hình; nếu không, vào `http://comitup.local`.
 4. Chọn SSID, nhập mật khẩu → Pi lưu lại và chuyển sang chế độ client.
+
+**AP để mở là có chủ ý.** Đã thử đặt `ap_password` trên Comitup 1.43 / Pi OS trixie:
+AP hiện ra bình thường nhưng điện thoại không bắt tay WPA được; xóa mật khẩu đi thì
+vào ngay. AP này chỉ tồn tại khi Pi chưa có mạng và qua đó chỉ làm được một việc là
+chọn WiFi, nên rủi ro thấp. Vẫn có thể truyền `AP_PASSWORD=...` nếu muốn thử lại.
+
+Ép Pi vào chế độ AP mà không cần khởi động lại (chạy ở console, không qua SSH):
+
+```bash
+sudo nmcli dev disconnect wlan0     # Comitup sẽ tự dựng AP sau vài giây
+sudo nmcli con up "<tên-profile-AP>" # hoặc ép thẳng, xem tên bằng: nmcli con show
+```
 
 Lệnh kiểm tra trên Pi: `comitup-cli`, `systemctl status comitup`, `journalctl -u comitup -f`.
 
