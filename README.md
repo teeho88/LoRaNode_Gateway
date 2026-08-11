@@ -236,6 +236,38 @@ $env:PORT='3001'
 npm start
 ```
 
+## Cấu Hình WiFi Cho Pi Từ Điện Thoại (Comitup)
+
+Mặc định Raspberry Pi chỉ nối được WiFi đã lưu sẵn trong thẻ nhớ. Comitup cho phép
+đổi WiFi tại chỗ mà không cần màn hình, bàn phím hay tháo thẻ SD.
+
+Cài đặt (chạy trên Pi, **qua dây mạng hoặc màn hình/bàn phím — không chạy qua SSH WiFi**):
+
+```bash
+sudo bash scripts/setup-comitup.sh
+sudo reboot
+```
+
+Đổi tên/mật khẩu điểm phát:
+
+```bash
+sudo AP_NAME="HTGSNDDA-<nnnn>" AP_PASSWORD="matkhau8kytu" bash scripts/setup-comitup.sh
+```
+
+Cách dùng sau khi cài:
+
+1. Pi không nối được WiFi đã lưu → tự phát AP tên `HTGSNDDA-<số>`.
+2. Điện thoại kết nối vào AP đó (mật khẩu mặc định `htgsndda2025`).
+3. Trình duyệt tự mở trang cấu hình; nếu không, vào `http://comitup.local`.
+4. Chọn SSID, nhập mật khẩu → Pi lưu lại và chuyển sang chế độ client.
+
+Lệnh kiểm tra trên Pi: `comitup-cli`, `systemctl status comitup`, `journalctl -u comitup -f`.
+
+Comitup chuyển quyền quản lý `wlan0` sang NetworkManager và tắt `dhcpcd`,
+`wpa_supplicant@wlan0`, `dnsmasq`. Script tự sao lưu `/etc/network/interfaces`
+và `/etc/comitup.conf` trước khi sửa. Giao diện comitup chạy ở port 80, dashboard
+gateway ở port 3000 — không đụng nhau.
+
 ## Cấu Hình `.env`
 
 ```env
